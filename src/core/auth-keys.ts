@@ -43,6 +43,11 @@ export const AUTH_KEYS: readonly AuthKeyInfo[] = [
 		docsUrl: "https://app.tavily.com/",
 	},
 	{
+		id: "SEARXNG_URL",
+		label: "SearXNG (Basis-URL)",
+		description: "Self-hosted SearXNG instance base URL (no key, LAN). Setting the URL activates it as fallback engine, e.g. http://searxng.internal:8080",
+	},
+	{
 		id: "BRAVE_API_KEY",
 		label: "Brave Search",
 		description: "Web-search engine for the researcher sub-agent — the alternative to Tavily. Setting the key activates it.",
@@ -163,6 +168,11 @@ export function validateKeyShape(id: string, rawValue: string): KeyShapeResult {
 		case "BRAVE_API_KEY":
 			// No public format — a length floor + paste hygiene only.
 			return nonEmpty(20);
+		case "SEARXNG_URL":
+			// Not a secret — a LAN base URL (may contain dots/slashes, no spaces).
+			return /^https?:\/\/\S+$/.test(value)
+				? { ok: true }
+				: { ok: false, error: `${id} must be a full http(s) base URL, e.g. http://searxng.internal:8080` };
 		case "DEEPGRAM_API_KEY":
 			// No public format — the length floor only catches truncated pastes.
 			return nonEmpty(20);

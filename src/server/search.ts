@@ -108,12 +108,51 @@ export function braveProvider(apiKey: string, fetchFn: FetchLike = fetch): Searc
 	};
 }
 
+/** SearXNG (self-hosted LAN instance): GET <base>/search?q=&format=json.
+ *  The "key" here is the instance BASE URL (env SEARXNG_URL), not a
+ *  secret — self-hosted, no auth. VERIFIED against a local instance, 2026-10-27:
+ *  settings.yml has json enabled; response {results: [{title, url,
+ *  content, …}]}. */
+export function searxngProvider(baseUrl: string, fetchFn: FetchLike = fetch): SearchProvider {
+	return {
+		id: "searxng",
+		async search(query: string, count: number): Promise<SearchHit[]> {
+			const base = baseUrl.replace(/\/search\/?$/, "").replace(/\/+$/, "");
+			const url = new URL(`${base}/search`);
+			url.searchParams.set("q", query);
+			url.searchParams.set("format", "json");
+			url.searchParams.set("categories", "general");
+			const resp = await fetchFn(url.toString(), {
+				headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (X11; Linux x86_64) Firefox/130.0" },
+				signal: AbortSignal.timeout(30_000),
+			});
+			if (!resp.ok) {
+				const body = await resp.text();
+				throw new Error(`SearXNG ${resp.status}: ${body.slice(0, 200)}`);
+			}
+			const data = (await resp.json()) as {
+				results?: Array<{ title?: string; url?: string; content?: string }>;
+			};
+			return (data.results ?? [])
+				.filter((r) => typeof r.url === "string" && r.url)
+				.slice(0, Math.min(count, 20))
+				.map((r) => ({
+					title: r.title ?? r.url ?? "",
+					url: r.url ?? "",
+					snippet: (r.content ?? "").replace(/\n/g, " ").slice(0, 500),
+				}));
+		},
+	};
+}
+
 /** The engines this wave ships, in PREFERENCE order (both keys present,
  *  no explicit pin → the first live engine wins; owner decision
  *  2026-09-20: Tavily first — the AI-native search API the wave chose). */
 const ENGINE_ORDER: ReadonlyArray<{ id: SearchEngineId; envVar: string }> = [
 	{ id: "tavily", envVar: "TAVILY_API_KEY" },
 	{ id: "brave", envVar: "BRAVE_API_KEY" },
+	// Self-hosted LAN fallback: the "key" is the instance base URL.
+	{ id: "searxng", envVar: "SEARXNG_URL" },
 ];
 
 /** The engine's key (env-or-file; env wins) — null when the engine is
@@ -138,7 +177,7 @@ export function resolveSearchEngineFor(
 			return {
 				available: false,
 				engine: null,
-				reason: `search engine is set to "${pinned}" but its API key is missing — set the ${pinned === "tavily" ? "TAVILY_API_KEY" : "BRAVE_API_KEY"} key`,
+				reason: `search engine is set to "${pinned}" but its API key is missing — set the ${pinned === "tavily" ? "TAVILY_API_KEY" : pinned === "brave" ? "BRAVE_API_KEY" : "SEARXNG_URL (base URL, e.g. http://searxng.internal:8080)"} key`,
 				key: null,
 			};
 		}
@@ -165,6 +204,7 @@ export function searchStatus(): SearchStatus {
 		{
 			tavily: engineKey("tavily") ?? undefined,
 			brave: engineKey("brave") ?? undefined,
+			searxng: engineKey("searxng") ?? undefined,
 		},
 	);
 	return { available, engine, reason };
@@ -183,7 +223,10 @@ export function searchProvider(): SearchProvider | null {
 	const resolved = resolveSearchEngineFor(effectiveSettings().agent.search?.engine, {
 		tavily: engineKey("tavily") ?? undefined,
 		brave: engineKey("brave") ?? undefined,
+		searxng: engineKey("searxng") ?? undefined,
 	});
 	if (!resolved.available || !resolved.key) return null;
-	return resolved.engine === "tavily" ? tavilyProvider(resolved.key) : braveProvider(resolved.key);
+	if (resolved.engine === "tavily") return tavilyProvider(resolved.key);
+	if (resolved.engine === "brave") return braveProvider(resolved.key);
+	return searxngProvider(resolved.key);
 }
