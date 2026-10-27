@@ -511,8 +511,14 @@ export function pickNearest<T extends { id: string; x: number; y: number }>(
 
 // ─── Bridge helpers (fork, 2026-10-27; unit-tested) ─────────────────────────
 
-/** Bridges draw in their own warm color, apart from the theme's edge ink. */
-export const BRIDGE_COLOR = "#e8a33d";
+/** Bridges draw in a muted sand tone, apart from the theme's edge ink —
+ *  quiet enough to sit behind the arguments (owner, 2026-10-27: "weniger
+ *  grell"). */
+export const BRIDGE_COLOR = "#c8b48c";
+/** Bridge-curve opacity: zoomed out → zoomed in, and when hovered. */
+const BRIDGE_ALPHA_OUT = 0.12;
+const BRIDGE_ALPHA_IN = 0.45;
+const BRIDGE_ALPHA_HOVER = 0.9;
 /** How far a bridge curve bows out, as a share of its chord. */
 export const BRIDGE_BEND = 0.18;
 /** Hit-test distance for hovering a bridge, screen px. */
@@ -620,7 +626,63 @@ interface BridgeBundle {
 	ay: number;
 	bx: number;
 	by: number;
+	/** Rough cluster radii (mean member distance from the centroid). */
+	ra: number;
+	rb: number;
 	count: number;
+}
+
+/** The zoomed-out band between two sources (owner sketch, 2026-10-27): a
+ *  soft tube that flares into both clusters and narrows in the middle,
+ *  like a light shadow. Four quadratic arcs — upper flank, cap into b,
+ *  lower flank, cap into a — as point triples [from, control, to]. The
+ *  flanks pass through the waist (±waist at the midpoint). `scale`
+ *  shrinks every width (the layered fill draws 1 → narrow). Exported for
+ *  the test pin. */
+export function bundleBand(
+	a: Pt,
+	b: Pt,
+	ra: number,
+	rb: number,
+	count: number,
+	scale = 1,
+): { arcs: [Pt, Pt, Pt][]; waist: number; flareA: number; flareB: number } | null {
+	const dx = b.x - a.x;
+	const dy = b.y - a.y;
+	const d = Math.hypot(dx, dy);
+	if (d < 1e-6) return null;
+	const ux = dx / d;
+	const uy = dy / d;
+	const nx = -uy;
+	const ny = ux;
+	const flareA = 0.7 * ra * scale;
+	const flareB = 0.7 * rb * scale;
+	const waist = Math.min(flareA, flareB) * Math.min(0.5, 0.18 + 0.04 * Math.sqrt(count));
+	// The ends sit half a radius inside each cluster, so the tube melts
+	// into the hull tint instead of stopping at a visible edge.
+	const sa = { x: a.x + ux * ra * 0.5, y: a.y + uy * ra * 0.5 };
+	const sb = { x: b.x - ux * rb * 0.5, y: b.y - uy * rb * 0.5 };
+	const mid = { x: (sa.x + sb.x) / 2, y: (sa.y + sb.y) / 2 };
+	const at = (p: Pt, side: number, w: number): Pt => ({ x: p.x + nx * side * w, y: p.y + ny * side * w });
+	// Control point that makes a quadratic from p to q pass through m at t = ½.
+	const through = (p: Pt, m: Pt, q: Pt): Pt => ({ x: 2 * m.x - (p.x + q.x) / 2, y: 2 * m.y - (p.y + q.y) / 2 });
+	const a1 = at(sa, 1, flareA);
+	const b1 = at(sb, 1, flareB);
+	const b2 = at(sb, -1, flareB);
+	const a2 = at(sa, -1, flareA);
+	const capB = { x: sb.x + ux * flareB * 0.6, y: sb.y + uy * flareB * 0.6 };
+	const capA = { x: sa.x - ux * flareA * 0.6, y: sa.y - uy * flareA * 0.6 };
+	return {
+		waist,
+		flareA,
+		flareB,
+		arcs: [
+			[a1, through(a1, at(mid, 1, waist), b1), b1],
+			[b1, capB, b2],
+			[b2, through(b2, at(mid, -1, waist), a2), a2],
+			[a2, capA, a1],
+		],
+	};
 }
 
 /** Relative luminance of a #rrggbb color, 0..1 (tooltip card contrast). */
@@ -1526,12 +1588,35 @@ export class GraphCanvasRenderer {
 				centroid.set(cluster.id, acc);
 			}
 		}
+		// Rough radius per cluster: the mean member distance from the centroid.
+		const radius = new Map<string, number>();
+		for (const cluster of data.clusters) {
+			const c = centroid.get(cluster.id);
+			if (!c?.n) continue;
+			let sum = 0;
+			let n = 0;
+			for (const id of cluster.members) {
+				const node = this.nodeById.get(id);
+				if (!node || isImpNodeId(id) || !isVisible(id)) continue;
+				sum += Math.hypot(node.x - c.x / c.n, node.y - c.y / c.n);
+				n++;
+			}
+			radius.set(cluster.id, n > 0 ? Math.max(sum / n, nodeR * 4) : nodeR * 4);
+		}
 		const shown = data.bridges.filter((br) => isVisible(br.to) && br.from.some(isVisible));
 		for (const { a, b, count } of bundleBridges(shown, (id) => clusterOfId.get(id))) {
 			const ca = centroid.get(a);
 			const cb = centroid.get(b);
 			if (!ca?.n || !cb?.n) continue;
-			bundles.push({ ax: ca.x / ca.n, ay: ca.y / ca.n, bx: cb.x / cb.n, by: cb.y / cb.n, count });
+			bundles.push({
+				ax: ca.x / ca.n,
+				ay: ca.y / ca.n,
+				bx: cb.x / cb.n,
+				by: cb.y / cb.n,
+				ra: radius.get(a) ?? nodeR * 4,
+				rb: radius.get(b) ?? nodeR * 4,
+				count,
+			});
 		}
 	}
 
@@ -1959,28 +2044,41 @@ export class GraphCanvasRenderer {
 			ctx.fill(this.headsPath);
 		}
 
-		// 3b. Fork (2026-10-27): cross-source bridges. Zoomed out, one band
-		// per pair of sources carries the overview and the single curves
-		// stay faint; zoomed in, the dashed curves take over. The hovered
+		// 3b. Fork (2026-10-27): cross-source bridges. Zoomed out, one soft
+		// band per pair of sources — a light shadow that flares into both
+		// clusters (owner sketch) — carries the overview and the single
+		// curves stay faint; zoomed in, the curves take over. The hovered
 		// bridge draws solid and thicker (its card is drawn last, step 9).
 		if (settings.bridges && this.bridgeHits.length > 0) {
 			const color = data.colors.bridge ?? BRIDGE_COLOR;
-			const width = Math.max(settings.edgeWidth, 1);
+			const width = Math.max(settings.edgeWidth, 0.5); // the edge slider's 0 end must not erase bridges
 			ctx.save();
-			ctx.strokeStyle = color;
-			ctx.fillStyle = color;
 			if (regionAlpha > 0.01) {
-				ctx.lineCap = "round";
+				// Layered fills, wide → narrow: the overlap brightens the core
+				// and the edges stay soft (the hull look, no blur filter).
+				ctx.fillStyle = rgbaFromHex(data.colors.hoverText, 0.035 * regionAlpha);
 				for (const bundle of this.bridgeBundles) {
-					ctx.globalAlpha = 0.4 * regionAlpha;
-					ctx.lineWidth = (2 + 1.5 * Math.sqrt(bundle.count)) / k;
-					ctx.beginPath();
-					ctx.moveTo(bundle.ax, bundle.ay);
-					ctx.lineTo(bundle.bx, bundle.by);
-					ctx.stroke();
+					for (const scale of [1, 0.75, 0.5]) {
+						const band = bundleBand(
+							{ x: bundle.ax, y: bundle.ay },
+							{ x: bundle.bx, y: bundle.by },
+							bundle.ra,
+							bundle.rb,
+							bundle.count,
+							scale,
+						);
+						if (!band) continue;
+						ctx.beginPath();
+						ctx.moveTo(band.arcs[0]![0].x, band.arcs[0]![0].y);
+						for (const [, c, to] of band.arcs) ctx.quadraticCurveTo(c.x, c.y, to.x, to.y);
+						ctx.closePath();
+						ctx.fill();
+					}
 				}
 			}
-			ctx.globalAlpha = 0.25 + 0.75 * nodeAlpha;
+			ctx.strokeStyle = color;
+			ctx.fillStyle = color;
+			ctx.globalAlpha = BRIDGE_ALPHA_OUT + (BRIDGE_ALPHA_IN - BRIDGE_ALPHA_OUT) * nodeAlpha;
 			ctx.lineWidth = width / k;
 			ctx.setLineDash([6 / k, 4 / k]);
 			ctx.stroke(this.bridgeShafts);
@@ -1990,8 +2088,8 @@ export class GraphCanvasRenderer {
 			ctx.setLineDash([]);
 			ctx.fill(this.bridgeHeads);
 			if (this.hoverBridge) {
-				ctx.globalAlpha = 1;
-				ctx.lineWidth = (width * 2.5) / k;
+				ctx.globalAlpha = BRIDGE_ALPHA_HOVER;
+				ctx.lineWidth = (Math.max(width, 1) * 2) / k;
 				for (const hit of this.bridgeHits) {
 					if (hit.bridge !== this.hoverBridge.bridge) continue;
 					const c = hit.curve;
@@ -2084,14 +2182,15 @@ export class GraphCanvasRenderer {
 		}
 
 		// 8b. Fork: bundle counts, faded in with the region labels (same gate),
-		// at the band's midpoint and at constant screen size.
+		// at the band's midpoint and at constant screen size — quiet, like
+		// the band itself.
 		if (settings.bridges && regionAlpha > 0.01 && this.bridgeBundles.length > 0) {
 			ctx.save();
-			ctx.globalAlpha = regionAlpha;
-			ctx.font = `${LABEL_WEIGHT} ${(settings.clusterLabelSize * 0.85) / k}px ${data.fontFamily}`;
+			ctx.globalAlpha = 0.6 * regionAlpha;
+			ctx.font = `${LABEL_WEIGHT} ${(settings.clusterLabelSize * 0.75) / k}px ${data.fontFamily}`;
 			ctx.textAlign = "center";
 			ctx.textBaseline = "middle";
-			ctx.fillStyle = data.colors.bridge ?? BRIDGE_COLOR;
+			ctx.fillStyle = data.colors.label;
 			for (const bundle of this.bridgeBundles) {
 				const label = `${bundle.count} bridge${bundle.count === 1 ? "" : "s"}`;
 				ctx.fillText(label, (bundle.ax + bundle.bx) / 2, (bundle.ay + bundle.by) / 2);

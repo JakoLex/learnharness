@@ -9,7 +9,7 @@ import { describe, it } from "node:test";
 import type { DerivedGraph } from "../src/core/graph.ts";
 import { validateBridges, type BridgeProposal } from "../src/agent/subagents/extraction.ts";
 import { deriveView, simplifyChains } from "../src/core/graph.ts";
-import { bridgeCurve, bundleBridges, distToPolyline, sampleQuad } from "../components/graph-canvas.ts";
+import { bridgeCurve, bundleBand, bundleBridges, distToPolyline, sampleQuad } from "../components/graph-canvas.ts";
 import { BRIDGE_ANCHOR } from "../src/core/contracts.ts";
 
 // Two sources: A (functional analysis) and B (mechanics). Inside B,
@@ -174,5 +174,31 @@ describe("bridge canvas helpers", () => {
 		const pts = sampleQuad({ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 10, y: 0 }, 10);
 		assert.equal(pts.length, 11);
 		assert.ok(Math.abs(distToPolyline({ x: 5, y: 3 }, pts) - 3) < 1e-9);
+	});
+});
+
+describe("bundleBand (the zoomed-out shadow between two sources)", () => {
+	const band = bundleBand({ x: 0, y: 0 }, { x: 100, y: 0 }, 20, 10, 9)!;
+
+	it("flares into both clusters and narrows in the middle", () => {
+		assert.equal(band.flareA, 14);
+		assert.equal(band.flareB, 7);
+		assert.ok(band.waist > 0 && band.waist < Math.min(band.flareA, band.flareB));
+	});
+
+	it("is one closed outline of four arcs", () => {
+		assert.equal(band.arcs.length, 4);
+		for (let i = 0; i < 4; i++) assert.deepEqual(band.arcs[i]![2], band.arcs[(i + 1) % 4]![0]);
+	});
+
+	it("passes through the waist at the middle of each flank", () => {
+		const [p, c, q] = band.arcs[0]!;
+		const midY = 0.25 * p.y + 0.5 * c.y + 0.25 * q.y;
+		assert.ok(Math.abs(Math.abs(midY) - band.waist) < 1e-9);
+	});
+
+	it("narrows with scale and gives nothing for coincident centers", () => {
+		assert.ok(bundleBand({ x: 0, y: 0 }, { x: 100, y: 0 }, 20, 10, 9, 0.5)!.flareA < band.flareA);
+		assert.equal(bundleBand({ x: 1, y: 1 }, { x: 1, y: 1 }, 20, 10, 9), null);
 	});
 });
