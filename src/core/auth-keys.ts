@@ -46,6 +46,7 @@ export const AUTH_KEYS: readonly AuthKeyInfo[] = [
 		id: "SEARXNG_URL",
 		label: "SearXNG (Basis-URL)",
 		description: "Self-hosted SearXNG instance base URL (no key, LAN). Setting the URL activates it as fallback engine, e.g. http://searxng.internal:8080",
+		docsUrl: "https://docs.searxng.org/",
 	},
 	{
 		id: "BRAVE_API_KEY",
