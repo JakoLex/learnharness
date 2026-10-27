@@ -23,7 +23,8 @@ import type {
 	ExtractionStageUsage,
 	SessionFindings,
 } from "../../core/contracts.ts";
-import { BRIDGE_ANCHOR, getGraph, mergeFindings, type DerivedGraph, type EmissionStats, type GraphDeps } from "../../core/graph.ts";
+import { getGraph, mergeFindings, type DerivedGraph, type EmissionStats, type GraphDeps } from "../../core/graph.ts";
+import { BRIDGE_ANCHOR } from "../../core/contracts.ts";
 import type { GraphStore } from "../../core/ports.ts";
 import { emit } from "../../core/events.ts";
 import { settleGraphLayout } from "../../core/layout-settle.ts";
@@ -1207,7 +1208,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 				// BRIDGE_ANCHOR, which keeps simplifyChains off them.
 				const merged = mergeFindings(
 					sourceId,
-					{ propositions: [], chains: accepted.map(({ premises, conclusion }) => ({ premises, conclusion })) },
+					{ propositions: [], chains: accepted.map(({ premises, conclusion, reason }) => ({ premises, conclusion, note: reason })) },
 					{ links: [] },
 					{ chatStore, graphStore },
 					{ foldedAt: new Date().toISOString(), coverage: [], chainAnchor: BRIDGE_ANCHOR },
