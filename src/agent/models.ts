@@ -13,6 +13,7 @@ import { type ModelRole } from "../../config.ts";
 import { DEFAULT_THINKING_ORDER } from "../core/settings.ts";
 import packageMetadata from "../../package.json" with { type: "json" };
 import { chatGPTModel } from "./chatgpt-bridge.ts";
+import { localProviders } from "./local-providers.ts";
 import { chatGPTStream } from "./chatgpt-stream.ts";
 import type { ChatGPTDispatchLifecycle } from "./chatgpt-request-cycle.ts";
 import { nativeSubscriptionId, nativeSubscriptionModel } from "./subscription-bridge.ts";
@@ -62,6 +63,9 @@ export function piModels() {
 	if (!collection) {
 		collection = createModels({ identity: APP_IDENTITY });
 		for (const provider of builtinProviders()) collection.setProvider(provider);
+		// Local LAN fleet (llama-swap 3090 + SlopGate) — same federation as
+		// the builtins: keyed providers appear in the picker, see local-providers.ts.
+		for (const provider of localProviders()) collection.setProvider(provider);
 	}
 	return collection;
 }
