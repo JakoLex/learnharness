@@ -103,8 +103,16 @@ function chainKey(premises: ReadonlyArray<string>, conclusion: string): string {
  *  step appends one CoverageEntry per message on success ("covered" means
  *  exactly this merge happened). The notes path passes neither and keeps
  *  the whole-file checkpoint. */
+/** The provenance anchor of a cross-source bridge chain (fork,
+ *  2026-10-27): the bridger's merge stamps it on its chain lines, and
+ *  simplifyChains never drops a chain that carries it. */
+export const BRIDGE_ANCHOR = "bridge";
+
 export interface MergeSource {
 	foldedAt: string;
+	/** Fork (2026-10-27): the anchor stamped on this merge's CHAIN lines —
+	 *  the bridger passes BRIDGE_ANCHOR; everyone else leaves it unset (""). */
+	chainAnchor?: string;
 	/** The batch being merged (chat path): one entry per message in the
 	 *  extracted batch — undefined (notes path / coverage-less callers) →
 	 *  the legacy whole-chat checkpoint is written instead. */
@@ -247,7 +255,7 @@ export function mergeFindings(
 		const key = chainKey(premises, conclusion);
 		if (assertedByChat.has(key)) return; // this chat already asserted this argument
 		const id = idOfKey.get(key) ?? newGraphChainId();
-		ledgers.appendChain({ id, premises, conclusion, createdAt: now, provenance: pointOf(chatId) });
+		ledgers.appendChain({ id, premises, conclusion, createdAt: now, provenance: pointOf(chatId, source.chainAnchor) });
 		idOfKey.set(key, id);
 		assertedByChat.add(key);
 		stats.chains!++;
@@ -350,6 +358,14 @@ export function simplifyChains(lines: GraphChain[]): GraphChain[] {
 		if (list === undefined) byConclusion.set(head.conclusion, [entry]);
 		else list.push(entry);
 	}
+	// Fork (2026-10-27): bridge chains are exempt. A bridge usually ADDS the
+	// other source's premise to a derivation the source already holds
+	// ("central force + the general N = 0 ⟹ L = const law" next to "central
+	// force"), which rule 1 would always drop — the very premise the bridge
+	// exists to show.
+	const bridgeKeys = new Set(
+		[...groups].filter(([, bucket]) => bucket.some((l) => l.provenance.some((pt) => pt.messageId === BRIDGE_ANCHOR))).map(([key]) => key),
+	);
 	const droppedKeys = new Set<string>();
 	for (const candidates of byConclusion.values()) {
 		candidates.sort(
@@ -373,7 +389,7 @@ export function simplifyChains(lines: GraphChain[]): GraphChain[] {
 					}
 					return candidate.premises.every((p) => covered.has(p));
 			});
-			if (redundant) droppedKeys.add(candidate.key);
+			if (redundant && !bridgeKeys.has(candidate.key)) droppedKeys.add(candidate.key);
 			else kept.push(candidate);
 		}
 	}

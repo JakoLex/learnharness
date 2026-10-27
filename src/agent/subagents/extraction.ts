@@ -23,7 +23,7 @@ import type {
 	ExtractionStageUsage,
 	SessionFindings,
 } from "../../core/contracts.ts";
-import { getGraph, mergeFindings, type DerivedGraph, type EmissionStats, type GraphDeps } from "../../core/graph.ts";
+import { BRIDGE_ANCHOR, getGraph, mergeFindings, type DerivedGraph, type EmissionStats, type GraphDeps } from "../../core/graph.ts";
 import type { GraphStore } from "../../core/ports.ts";
 import { emit } from "../../core/events.ts";
 import { settleGraphLayout } from "../../core/layout-settle.ts";
@@ -703,7 +703,8 @@ function runBridger(
 
 /** The deterministic gate behind the bridger (exported for tests): a
  *  proposal passes only when every endpoint exists, the chain really
- *  crosses sources (one node of `sourceId`, one node without it), the
+ *  crosses sources (one node BORN in `sourceId`, one born elsewhere — a
+ *  node another source merely linked into stays its birth source's), the
  *  conclusion is not among its premises, and adding it closes no cycle
  *  (no premise is reachable from the conclusion over the existing chains
  *  plus the bridges accepted before it). */
@@ -713,7 +714,7 @@ export function validateBridges(
 	proposals: BridgeProposal[],
 ): { accepted: BridgeProposal[]; rejected: { proposal: BridgeProposal; why: string }[] } {
 	const nodes = new Map(graph.nodes.map((n) => [n.id, n]));
-	const ours = (id: string) => nodes.get(id)!.provenance.some((pt) => pt.chatId === sourceId);
+	const ours = (id: string) => nodes.get(id)!.provenance[0]?.chatId === sourceId;
 	const next = new Map<string, Set<string>>();
 	const addEdge = (from: string, to: string) => {
 		if (!next.has(from)) next.set(from, new Set());
@@ -1170,7 +1171,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		// Nothing of this source, or nothing else to bridge to: no model
 		// call, so no dock row and no usage record either.
 		const before = getGraph(graphStore).nodes;
-		const mine = before.filter((n) => n.provenance.some((pt) => pt.chatId === sourceId)).length;
+		const mine = before.filter((n) => n.provenance[0]?.chatId === sourceId).length; // born here
 		if (mine === 0 || mine === before.length) return { nodes: 0, chains: 0 };
 		setPhase(jobKey, "queued", kind, label);
 		try {
@@ -1178,7 +1179,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 				setPhase(jobKey, "bridging", kind, label);
 				const signal = runningExtractions.get(jobKey)?.controller.signal;
 				const graph = getGraph(graphStore);
-				const ours = graph.nodes.filter((n) => n.provenance.some((pt) => pt.chatId === sourceId));
+				const ours = graph.nodes.filter((n) => n.provenance[0]?.chatId === sourceId);
 				if (ours.length === 0 || ours.length === graph.nodes.length) return { nodes: 0, chains: 0 }; // changed while queued
 				console.info(`[extraction ${jobKey}] bridger starting (${ours.length} of ${graph.nodes.length} nodes)`);
 				const proposals = await runBridger(
@@ -1202,18 +1203,19 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 					console.info(`[extraction ${jobKey}] bridge: ${b.premises.join(" + ")} ⇒ ${b.conclusion} — ${b.reason}`);
 				setPhase(jobKey, "merging", kind, label);
 				// coverage: [] — a bridge pass covers no source text, so no
-				// checkpoint line; the chains carry the source's provenance.
+				// checkpoint line; the chains carry the source's provenance plus
+				// BRIDGE_ANCHOR, which keeps simplifyChains off them.
 				const merged = mergeFindings(
 					sourceId,
 					{ propositions: [], chains: accepted.map(({ premises, conclusion }) => ({ premises, conclusion })) },
 					{ links: [] },
 					{ chatStore, graphStore },
-					{ foldedAt: new Date().toISOString(), coverage: [] },
+					{ foldedAt: new Date().toISOString(), coverage: [], chainAnchor: BRIDGE_ANCHOR },
 				);
 				settleGraphLayout(graphStore);
 				console.info(
-					`[extraction ${jobKey}] bridges: ${merged.chains ?? 0} merged of ${proposals.length} proposed ` +
-						`(${Math.round(performance.now() - t0)}ms)`,
+					`[extraction ${jobKey}] bridges: ${merged.chains ?? 0} new of ${accepted.length} accepted, ` +
+						`${proposals.length} proposed (${Math.round(performance.now() - t0)}ms)`,
 				);
 				return merged;
 			});
