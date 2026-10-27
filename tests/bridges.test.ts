@@ -8,7 +8,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { DerivedGraph } from "../src/core/graph.ts";
 import { validateBridges, type BridgeProposal } from "../src/agent/subagents/extraction.ts";
-import { BRIDGE_ANCHOR, simplifyChains } from "../src/core/graph.ts";
+import { deriveView, simplifyChains } from "../src/core/graph.ts";
+import { bridgeCurve, bundleBridges, distToPolyline, sampleQuad } from "../components/graph-canvas.ts";
+import { BRIDGE_ANCHOR } from "../src/core/contracts.ts";
 
 // Two sources: A (functional analysis) and B (mechanics). Inside B,
 // b1 ⇒ b2 already holds.
@@ -84,5 +86,71 @@ describe("simplifyChains and bridge chains", () => {
 	it("keeps a bridge that adds the other source's premise", () => {
 		const kept = simplifyChains([line("arg_1", ["b1"], "b2"), line("arg_22", ["b1", "a1"], "b2", BRIDGE_ANCHOR)]);
 		assert.deepEqual(kept.map((l) => l.id), ["arg_1", "arg_22"]);
+	});
+});
+
+describe("deriveView and bridges (drawn apart from the arguments)", () => {
+	const g = {
+		nodes: [node("a1", "src_a"), node("b1", "src_b"), node("b2", "src_b")],
+		chains: [
+			{
+				id: "arg_br",
+				premises: ["a1", "b1"],
+				conclusion: "b2",
+				createdAt: "",
+				provenance: [{ chatId: "src_b", messageId: BRIDGE_ANCHOR }],
+				note: "a1 together with b1 gives b2.",
+			},
+		],
+	} as unknown as DerivedGraph;
+
+	it("draws no implication node and no edges for a bridge", () => {
+		const view = deriveView(g);
+		assert.ok(!view.nodes.some((n) => n.id === "arg_br"));
+		assert.deepEqual(view.edges, []);
+		assert.deepEqual(view.impLinks, []);
+	});
+
+	it("hands the canvas the foreign premise only, with the note", () => {
+		assert.deepEqual(deriveView(g).bridges, [
+			{ id: "arg_br", premises: ["a1", "b1"], conclusion: "b2", from: ["a1"], note: "a1 together with b1 gives b2." },
+		]);
+	});
+
+	it("keeps every premise in the logical edges", () => {
+		assert.deepEqual(deriveView(g).logicalEdges, [
+			{ from: "a1", to: "b2" },
+			{ from: "b1", to: "b2" },
+		]);
+	});
+});
+
+describe("bridge canvas helpers", () => {
+	it("bundles bridges per unordered pair of clusters", () => {
+		const cluster: Record<string, string> = { a1: "A", a2: "A", b1: "B", b2: "B" };
+		const bundles = bundleBridges(
+			[
+				{ from: ["a1"], to: "b1" },
+				{ from: ["b2"], to: "a2" },
+				{ from: ["a1"], to: "a2" },
+				{ from: ["x"], to: "b1" },
+			],
+			(id) => cluster[id],
+		);
+		assert.deepEqual(bundles, [{ a: "A", b: "B", count: 2 }]);
+	});
+
+	it("bends a curve to the left of its chord and stops at the discs", () => {
+		const c = bridgeCurve({ x: 0, y: 0 }, { x: 10, y: 0 }, 1, 1, 2)!;
+		assert.ok(c.ctrl.y > 0, "control point to the left of a→b (y down)");
+		assert.ok(Math.abs(Math.hypot(c.start.x, c.start.y) - 1) < 1e-9);
+		assert.ok(Math.abs(Math.hypot(c.head.tip.x - 10, c.head.tip.y) - 1) < 1e-9);
+		assert.equal(bridgeCurve({ x: 1, y: 1 }, { x: 1, y: 1 }, 1, 1, 2), null);
+	});
+
+	it("measures the distance to a sampled curve", () => {
+		const pts = sampleQuad({ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 10, y: 0 }, 10);
+		assert.equal(pts.length, 11);
+		assert.ok(Math.abs(distToPolyline({ x: 5, y: 3 }, pts) - 3) < 1e-9);
 	});
 });

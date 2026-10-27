@@ -60,6 +60,9 @@ export interface GraphRenderSettings {
 	 *  constant at any zoom, unlike labelSize which scales with the
 	 *  graph). Defaults to the old REGION_LABEL_SIZE constant (14). */
 	clusterLabelSize: number;
+	/** Fork (2026-10-27): draw the cross-source bridges (dashed curves,
+	 *  bundled per source pair when zoomed out). */
+	bridges: boolean;
 	/** Region rendering (the blurred cluster tints). Server-persisted
 	 *  since 2026-09-13 (user request) — was session-only dev state. */
 	regions: RegionTuning;
@@ -102,6 +105,7 @@ export function sanitizeRenderSettings(raw: unknown): GraphRenderSettings {
 			CLUSTER_LABEL_SIZE_LADDER,
 			DEFAULT_RENDER_SETTINGS.clusterLabelSize,
 		),
+		bridges: typeof r.bridges === "boolean" ? r.bridges : DEFAULT_RENDER_SETTINGS.bridges,
 		// Nested sections (2026-09-13): old files lack them → defaults.
 		// Legacy files also reset regions.dilation (its units changed with
 		// the pivot); the rest of the section's semantics are untouched.
@@ -268,6 +272,7 @@ export const DEFAULT_RENDER_SETTINGS: GraphRenderSettings = {
 	labelSize: 3,
 	clusterLabels: true,
 	clusterLabelSize: 14,
+	bridges: true,
 	regions: DEFAULT_REGION_TUNING,
 	physics: DEFAULT_PHYSICS_TUNING,
 };

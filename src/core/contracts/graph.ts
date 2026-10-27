@@ -51,6 +51,31 @@ export interface GraphChain {
 	 *  unioned across assertion lines at read time. */
 	provenance: ProvenancePoint[];
 	createdAt: string;
+	/** Fork (2026-10-27): a cross-source bridge's one-sentence reason
+	 *  (the bridger's), shown when hovering the bridge. Absent elsewhere. */
+	note?: string;
+}
+
+/** The provenance anchor of a cross-source bridge chain (fork,
+ *  2026-10-27): the bridger's merge stamps it on its chain lines. Bridges
+ *  draw as their own dashed curves, stay out of the layout physics, and
+ *  simplifyChains never drops them. */
+export const BRIDGE_ANCHOR = "bridge";
+
+export const isBridgeChain = (chain: Pick<GraphChain, "provenance">): boolean =>
+	chain.provenance.some((pt) => pt.messageId === BRIDGE_ANCHOR);
+
+/** A bridge as the canvas draws it (fork, 2026-10-27): one curve from each
+ *  premise born in ANOTHER source than the conclusion — the same-source
+ *  premises are already connected through that source's own chains. The
+ *  logical edges keep every premise. */
+export interface GraphBridge {
+	id: string;
+	premises: string[];
+	conclusion: string;
+	/** The premises whose birth source differs from the conclusion's. */
+	from: string[];
+	note?: string;
 }
 
 /** What one extraction run merged into the graph ledgers — the merger's
@@ -253,6 +278,8 @@ export interface ExtractedChain {
 	premises: string[];
 	/** The proposition id the premises jointly imply. */
 	conclusion: string;
+	/** Fork: the bridger's reason, stored on bridge chain lines. */
+	note?: string;
 }
 
 /** The extractor's output shape: the raw reasoning chains. */
@@ -321,6 +348,10 @@ export interface GraphSnapshot {
 	 *  row and the conclusion's row (owner, 2026-09-30) — strictly
 	 *  above the premises, strictly below the conclusion. */
 	impLinks: Array<{ id: string; premises: string[]; conclusion: string }>;
+	/** Fork (2026-10-27): cross-source bridges, drawn apart from `edges`
+	 *  (no implication node, no physics); their premises stay in
+	 *  `logicalEdges`. */
+	bridges: GraphBridge[];
 	/** The STORED reasoning chains (merged by (premises, conclusion) at
 	 *  read): the chain table's and the practice pipeline's input — they
 	 * read the truth, never the derived fan-out. */

@@ -120,10 +120,17 @@ describe("sanitizeRenderSettings", () => {
 			labelSize: 4,
 			clusterLabels: false,
 			clusterLabelSize: 20,
+			bridges: false,
 			regions: DEFAULT_REGION_TUNING,
 			physics: DEFAULT_PHYSICS_TUNING,
 		};
 		assert.deepEqual(sanitizeRenderSettings(valid), valid); // every value a ladder member
+	});
+
+	test("bridges (fork): a boolean passes, anything else falls back to on", () => {
+		assert.equal(sanitizeRenderSettings({ sizeUnits: "world", bridges: false }).bridges, false);
+		assert.equal(sanitizeRenderSettings({ sizeUnits: "world", bridges: "no" } as never).bridges, true);
+		assert.equal(sanitizeRenderSettings({}).bridges, DEFAULT_RENDER_SETTINGS.bridges);
 	});
 
 	test("supports settings are GONE (chains-primary, 2026-09-30): stale keys silently drop", () => {

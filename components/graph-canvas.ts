@@ -103,6 +103,16 @@ export interface CanvasEdge {
  *  excluded from every hit-test path. Exported for the test pin. */
 export const isImpNodeId = (id: string): boolean => id.startsWith("arg_");
 
+/** Fork (2026-10-27): one cross-source bridge (core GraphBridge). Drawn as
+ *  one dashed curve per foreign premise → conclusion, outside the physics;
+ *  bundled per source pair when zoomed out; the note shows on hover. */
+export interface CanvasBridge {
+	id: string;
+	from: string[];
+	to: string;
+	note?: string;
+}
+
 /** One cluster region: member node ids + the LLM-coined label (or null). */
 export interface CanvasCluster {
 	id: string;
@@ -117,6 +127,8 @@ export interface CanvasColors {
 	edge: string;
 	label: string;
 	hoverText: string;
+	/** Fork: the bridge color (falls back to BRIDGE_COLOR). */
+	bridge?: string;
 }
 
 export interface CanvasData {
@@ -130,6 +142,8 @@ export interface CanvasData {
 	/** The imp chain linkage — the depth pass anchors each junction at
 	 *  the premises/conclusion midpoint (owner, 2026-09-30). */
 	impLinks?: ReadonlyArray<{ id: string; premises: ReadonlyArray<string>; conclusion: string }>;
+	/** Fork: cross-source bridges — never part of `edges` or the sim. */
+	bridges?: CanvasBridge[];
 	clusters: CanvasCluster[];
 	colors: CanvasColors;
 	/** Body font family (labels must match the app typography). */
@@ -492,6 +506,143 @@ export function pickNearest<T extends { id: string; x: number; y: number }>(
 	return best;
 }
 
+// ─── Bridge helpers (fork, 2026-10-27; unit-tested) ─────────────────────────
+
+/** Bridges draw in their own warm color, apart from the theme's edge ink. */
+export const BRIDGE_COLOR = "#e8a33d";
+/** How far a bridge curve bows out, as a share of its chord. */
+export const BRIDGE_BEND = 0.18;
+/** Hit-test distance for hovering a bridge, screen px. */
+const BRIDGE_PICK_PX = 6;
+/** Points per curve for hit-testing (cheap at a few dozen bridges). */
+const BRIDGE_SAMPLES = 24;
+const BRIDGE_TOOLTIP_WIDTH = 300; // screen px
+
+export interface BridgeCurve {
+	start: Pt;
+	ctrl: Pt;
+	end: Pt;
+	head: { tip: Pt; left: Pt; right: Pt };
+}
+
+/** One bridge curve a → b: a quadratic Bézier bowing to the left of the
+ *  chord by `bend` of its length (two bridges between the same pair of
+ *  nodes in opposite directions bow apart), cut back to the discs, with
+ *  an arrowhead along the curve's end tangent. null when a and b coincide. */
+export function bridgeCurve(a: Pt, b: Pt, fromRadius: number, toRadius: number, headLength: number, bend = BRIDGE_BEND): BridgeCurve | null {
+	const dx = b.x - a.x;
+	const dy = b.y - a.y;
+	const len = Math.hypot(dx, dy);
+	if (len < 1e-6) return null;
+	const ctrl = { x: (a.x + b.x) / 2 - (dy / len) * len * bend, y: (a.y + b.y) / 2 + (dx / len) * len * bend };
+	const toward = (from: Pt, to: Pt, r: number): Pt => {
+		const l = Math.hypot(to.x - from.x, to.y - from.y) || 1;
+		return { x: from.x + ((to.x - from.x) / l) * r, y: from.y + ((to.y - from.y) / l) * r };
+	};
+	const start = toward(a, ctrl, fromRadius);
+	const tip = toward(b, ctrl, toRadius);
+	const tl = Math.hypot(tip.x - ctrl.x, tip.y - ctrl.y) || 1;
+	const ux = (tip.x - ctrl.x) / tl;
+	const uy = (tip.y - ctrl.y) / tl;
+	const base = { x: tip.x - ux * headLength, y: tip.y - uy * headLength };
+	const halfW = 0.4 * headLength;
+	return {
+		start,
+		ctrl,
+		end: base,
+		head: {
+			tip,
+			left: { x: base.x - uy * halfW, y: base.y + ux * halfW },
+			right: { x: base.x + uy * halfW, y: base.y - ux * halfW },
+		},
+	};
+}
+
+/** n+1 points along a quadratic Bézier (the hover hit-test polyline). */
+export function sampleQuad(p0: Pt, c: Pt, p1: Pt, n: number): Pt[] {
+	const pts: Pt[] = [];
+	for (let i = 0; i <= n; i++) {
+		const t = i / n;
+		const u = 1 - t;
+		pts.push({ x: u * u * p0.x + 2 * u * t * c.x + t * t * p1.x, y: u * u * p0.y + 2 * u * t * c.y + t * t * p1.y });
+	}
+	return pts;
+}
+
+/** Shortest distance from p to a polyline. */
+export function distToPolyline(p: Pt, pts: readonly Pt[]): number {
+	let best = Infinity;
+	for (let i = 1; i < pts.length; i++) {
+		const a = pts[i - 1]!;
+		const b = pts[i]!;
+		const dx = b.x - a.x;
+		const dy = b.y - a.y;
+		const l2 = dx * dx + dy * dy;
+		const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
+		best = Math.min(best, Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy)));
+	}
+	return best;
+}
+
+/** Bridges per pair of clusters (unordered), for the zoomed-out bundles.
+ *  Each bridge counts once, under the cluster of its first foreign premise
+ *  and the cluster of its conclusion; bridges whose ends share a cluster or
+ *  sit outside every hull are not bundled. */
+export function bundleBridges(
+	bridges: readonly Pick<CanvasBridge, "from" | "to">[],
+	clusterOf: (nodeId: string) => string | undefined,
+): Array<{ a: string; b: string; count: number }> {
+	const counts = new Map<string, { a: string; b: string; count: number }>();
+	for (const bridge of bridges) {
+		const ca = bridge.from[0] === undefined ? undefined : clusterOf(bridge.from[0]);
+		const cb = clusterOf(bridge.to);
+		if (!ca || !cb || ca === cb) continue;
+		const [a, b] = ca < cb ? [ca, cb] : [cb, ca];
+		const key = `${a}\u0000${b}`;
+		const entry = counts.get(key) ?? { a, b, count: 0 };
+		entry.count++;
+		counts.set(key, entry);
+	}
+	return [...counts.values()];
+}
+
+interface BridgeHit {
+	bridge: number;
+	curve: BridgeCurve;
+	pts: Pt[];
+}
+
+interface BridgeBundle {
+	ax: number;
+	ay: number;
+	bx: number;
+	by: number;
+	count: number;
+}
+
+/** Relative luminance of a #rrggbb color, 0..1 (tooltip card contrast). */
+function luma(hex: string): number {
+	const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(hex);
+	if (!m) return 0;
+	const [r, g, b] = [m[1]!, m[2]!, m[3]!].map((h) => parseInt(h, 16) / 255);
+	return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+}
+
+/** Word-wrap for the bridge tooltip (screen px; measure = canvas). */
+function wrapText(text: string, maxWidth: number, measure: (s: string) => number): string[] {
+	const lines: string[] = [];
+	let line = "";
+	for (const word of text.split(/\s+/).filter(Boolean)) {
+		const candidate = line ? `${line} ${word}` : word;
+		if (line && measure(candidate) > maxWidth) {
+			lines.push(line);
+			line = word;
+		} else line = candidate;
+	}
+	if (line) lines.push(line);
+	return lines;
+}
+
 // ─── Canvas text helpers (ported verbatim) ─────────────────────────────────
 
 /** "#rrggbb" + alpha → "rgba(...)". */
@@ -639,6 +790,14 @@ export class GraphCanvasRenderer {
 	private nodesPath: Path2D | null = null;
 	private shaftsPath: Path2D = new Path2D();
 	private headsPath: Path2D = new Path2D();
+	// Fork (2026-10-27): bridge geometry — dashed curves, heads, hit-test
+	// polylines, and the zoomed-out bundles between cluster centroids.
+	private bridgeShafts: Path2D = new Path2D();
+	private bridgeHeads: Path2D = new Path2D();
+	private bridgeHits: BridgeHit[] = [];
+	private bridgeBundles: BridgeBundle[] = [];
+	/** The hovered bridge (index into data.bridges) + the pointer, screen px. */
+	private hoverBridge: { bridge: number; at: Pt } | null = null;
 	private regionCanvas: HTMLCanvasElement | null = null;
 	/** World rect the bitmap covers (drawImage target coords). */
 	private regionRect: { minX: number; minY: number; w: number; h: number } | null = null;
@@ -752,6 +911,7 @@ export class GraphCanvasRenderer {
 	setData(data: CanvasData): void {
 		this.data = data;
 		this.nodeById = new Map(data.nodes.map((n) => [n.id, n]));
+		this.hoverBridge = null; // indices refer to the old bridge list
 		let minX = Infinity;
 		let minY = Infinity;
 		let maxX = -Infinity;
@@ -953,7 +1113,14 @@ export class GraphCanvasRenderer {
 		}
 		const node = this.pickAt(pos.x, pos.y);
 		if ((node?.id ?? null) !== this.hoverId) this.setHover(node?.id ?? null);
-		this.canvas.style.cursor = node ? "pointer" : "";
+		// Fork: bridges hover only where no node is — the card follows the
+		// pointer, so any move over a bridge redraws.
+		const bridge = node ? null : this.pickBridge(pos.x, pos.y);
+		if (bridge !== null || this.hoverBridge) {
+			this.hoverBridge = bridge === null ? null : { bridge, at: pos };
+			this.markDirty();
+		}
+		this.canvas.style.cursor = node ? "pointer" : bridge !== null ? "help" : "";
 	};
 
 	private onPointerDown = (e: PointerEvent) => {
@@ -1043,6 +1210,10 @@ export class GraphCanvasRenderer {
 		if (this.dragId) return; // pointer capture keeps the drag alive
 		this.downPos = null;
 		this.setHover(null);
+		if (this.hoverBridge) {
+			this.hoverBridge = null;
+			this.markDirty();
+		}
 	};
 
 	// ── Internals ──
@@ -1281,6 +1452,7 @@ export class GraphCanvasRenderer {
 		}
 		this.shaftsPath = shafts;
 		this.headsPath = heads;
+		this.buildBridges(isVisible, nodeR, arrowLen);
 
 		// Cluster regions are NOT built here: they rasterize into their own
 		// low-res bitmap (see buildRegions), on their own rebuild schedule
@@ -1298,6 +1470,125 @@ export class GraphCanvasRenderer {
 			if (isVisible(n.id) && !isImpNodeId(n.id)) this.labelLines.set(n.id, wrapLabel(ctx, n.label, maxW));
 		}
 		ctx.font = prevFont;
+	}
+
+	/** Fork (2026-10-27): bridge curves + hit polylines + per-source-pair
+	 *  bundles. Part of buildGeometry, so it follows positions, visibility
+	 *  and settings exactly like the edges. */
+	private buildBridges(isVisible: (id: string) => boolean, nodeR: number, arrowLen: number): void {
+		const shafts = new Path2D();
+		const heads = new Path2D();
+		const hits: BridgeHit[] = [];
+		const bundles: BridgeBundle[] = [];
+		this.bridgeShafts = shafts;
+		this.bridgeHeads = heads;
+		this.bridgeHits = hits;
+		this.bridgeBundles = bundles;
+		const data = this.data;
+		if (!data?.bridges?.length || !this.settings?.bridges) return;
+		data.bridges.forEach((bridge, index) => {
+			const b = this.nodeById.get(bridge.to);
+			if (!b || !isVisible(bridge.to)) return;
+			for (const fromId of bridge.from) {
+				const a = this.nodeById.get(fromId);
+				if (!a || !isVisible(fromId)) continue;
+				const curve = bridgeCurve(a, b, nodeR, nodeR, arrowLen);
+				if (!curve) continue;
+				shafts.moveTo(curve.start.x, curve.start.y);
+				shafts.quadraticCurveTo(curve.ctrl.x, curve.ctrl.y, curve.end.x, curve.end.y);
+				heads.moveTo(curve.head.tip.x, curve.head.tip.y);
+				heads.lineTo(curve.head.left.x, curve.head.left.y);
+				heads.lineTo(curve.head.right.x, curve.head.right.y);
+				heads.closePath();
+				hits.push({ bridge: index, curve, pts: sampleQuad(curve.start, curve.ctrl, curve.head.tip, BRIDGE_SAMPLES) });
+			}
+		});
+		// Bundles run between the centroids of the visible member propositions.
+		const clusterOfId = new Map<string, string>();
+		const centroid = new Map<string, { x: number; y: number; n: number }>();
+		for (const cluster of data.clusters) {
+			for (const id of cluster.members) {
+				if (isImpNodeId(id)) continue;
+				clusterOfId.set(id, cluster.id);
+				const node = this.nodeById.get(id);
+				if (!node || !isVisible(id)) continue;
+				const acc = centroid.get(cluster.id) ?? { x: 0, y: 0, n: 0 };
+				acc.x += node.x;
+				acc.y += node.y;
+				acc.n++;
+				centroid.set(cluster.id, acc);
+			}
+		}
+		const shown = data.bridges.filter((br) => isVisible(br.to) && br.from.some(isVisible));
+		for (const { a, b, count } of bundleBridges(shown, (id) => clusterOfId.get(id))) {
+			const ca = centroid.get(a);
+			const cb = centroid.get(b);
+			if (!ca?.n || !cb?.n) continue;
+			bundles.push({ ax: ca.x / ca.n, ay: ca.y / ca.n, bx: cb.x / cb.n, by: cb.y / cb.n, count });
+		}
+	}
+
+	/** The bridge under a screen point (BRIDGE_PICK_PX on screen), or null. */
+	private pickBridge(px: number, py: number): number | null {
+		if (!this.settings?.bridges || this.bridgeHits.length === 0) return null;
+		const { x: tx, y: ty, k } = this.transform;
+		const p = { x: (px - tx) / k, y: (py - ty) / k };
+		const max = BRIDGE_PICK_PX / k;
+		let best: { bridge: number; d: number } | null = null;
+		for (const hit of this.bridgeHits) {
+			const d = distToPolyline(p, hit.pts);
+			if (d <= max && (!best || d < best.d)) best = { bridge: hit.bridge, d };
+		}
+		return best?.bridge ?? null;
+	}
+
+	/** Hover card for a bridge, in SCREEN space: "premise → conclusion",
+	 *  then the bridger's reason. */
+	private drawBridgeTooltip(dpr: number): void {
+		const data = this.data;
+		const hover = this.hoverBridge;
+		const bridge = hover && data?.bridges?.[hover.bridge];
+		if (!data || !hover || !bridge) return;
+		const ctx = this.ctx;
+		ctx.save();
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+		const size = 12;
+		const lineH = size * 1.35;
+		const pad = 8;
+		const name = (id: string) => this.nodeById.get(id)?.label ?? id;
+		const measure = (s: string) => ctx.measureText(s).width;
+		ctx.font = `600 ${size}px ${data.fontFamily}`;
+		const title = wrapText(`${bridge.from.map(name).join(" + ")} → ${name(bridge.to)}`, BRIDGE_TOOLTIP_WIDTH, measure);
+		ctx.font = `400 ${size}px ${data.fontFamily}`;
+		const body = bridge.note ? wrapText(bridge.note, BRIDGE_TOOLTIP_WIDTH, measure) : [];
+		const lines = [...title.map((t) => ({ t, bold: true })), ...body.map((t) => ({ t, bold: false }))];
+		let width = 0;
+		for (const { t, bold } of lines) {
+			ctx.font = `${bold ? 600 : 400} ${size}px ${data.fontFamily}`;
+			width = Math.max(width, measure(t));
+		}
+		const boxW = width + pad * 2;
+		const boxH = lines.length * lineH + pad * 2 + (body.length > 0 ? 4 : 0);
+		const x = Math.min(hover.at.x + 14, this.viewW - boxW - 4);
+		const y = Math.min(hover.at.y + 14, this.viewH - boxH - 4);
+		const light = luma(data.colors.hoverText) > 0.5; // dark theme → dark card
+		ctx.fillStyle = light ? "rgba(24, 24, 28, 0.94)" : "rgba(252, 252, 252, 0.96)";
+		ctx.strokeStyle = data.colors.bridge ?? BRIDGE_COLOR;
+		ctx.lineWidth = 1;
+		ctx.beginPath();
+		ctx.roundRect(Math.max(4, x), Math.max(4, y), boxW, boxH, 6);
+		ctx.fill();
+		ctx.stroke();
+		ctx.fillStyle = data.colors.hoverText;
+		ctx.textBaseline = "top";
+		let ty = Math.max(4, y) + pad;
+		lines.forEach(({ t, bold }, i) => {
+			if (i === title.length && body.length > 0) ty += 4;
+			ctx.font = `${bold ? 600 : 400} ${size}px ${data.fontFamily}`;
+			ctx.fillText(t, Math.max(4, x) + pad, ty);
+			ty += lineH;
+		});
+		ctx.restore();
 	}
 
 	/** (Re)create the live sim from data.nodes at their current
@@ -1661,6 +1952,54 @@ export class GraphCanvasRenderer {
 			ctx.fill(this.headsPath);
 		}
 
+		// 3b. Fork (2026-10-27): cross-source bridges. Zoomed out, one band
+		// per pair of sources carries the overview and the single curves
+		// stay faint; zoomed in, the dashed curves take over. The hovered
+		// bridge draws solid and thicker (its card is drawn last, step 9).
+		if (settings.bridges && this.bridgeHits.length > 0) {
+			const color = data.colors.bridge ?? BRIDGE_COLOR;
+			const width = Math.max(settings.edgeWidth, 1);
+			ctx.save();
+			ctx.strokeStyle = color;
+			ctx.fillStyle = color;
+			if (regionAlpha > 0.01) {
+				ctx.lineCap = "round";
+				for (const bundle of this.bridgeBundles) {
+					ctx.globalAlpha = 0.4 * regionAlpha;
+					ctx.lineWidth = (2 + 1.5 * Math.sqrt(bundle.count)) / k;
+					ctx.beginPath();
+					ctx.moveTo(bundle.ax, bundle.ay);
+					ctx.lineTo(bundle.bx, bundle.by);
+					ctx.stroke();
+				}
+			}
+			ctx.globalAlpha = 0.25 + 0.75 * nodeAlpha;
+			ctx.lineWidth = width / k;
+			ctx.setLineDash([6 / k, 4 / k]);
+			ctx.stroke(this.bridgeShafts);
+			ctx.setLineDash([]);
+			ctx.fill(this.bridgeHeads);
+			if (this.hoverBridge) {
+				ctx.globalAlpha = 1;
+				ctx.lineWidth = (width * 2.5) / k;
+				for (const hit of this.bridgeHits) {
+					if (hit.bridge !== this.hoverBridge.bridge) continue;
+					const c = hit.curve;
+					ctx.beginPath();
+					ctx.moveTo(c.start.x, c.start.y);
+					ctx.quadraticCurveTo(c.ctrl.x, c.ctrl.y, c.end.x, c.end.y);
+					ctx.stroke();
+					ctx.beginPath();
+					ctx.moveTo(c.head.tip.x, c.head.tip.y);
+					ctx.lineTo(c.head.left.x, c.head.left.y);
+					ctx.lineTo(c.head.right.x, c.head.right.y);
+					ctx.closePath();
+					ctx.fill();
+				}
+			}
+			ctx.restore();
+		}
+
 		// 4. Nodes: one cached Path2D, one fill.
 		ctx.fillStyle = data.colors.node;
 		ctx.fill(this.nodesPath);
@@ -1733,5 +2072,24 @@ export class GraphCanvasRenderer {
 			}
 			ctx.restore();
 		}
+
+		// 8b. Fork: bundle counts, faded in with the region labels (same gate),
+		// at the band's midpoint and at constant screen size.
+		if (settings.bridges && regionAlpha > 0.01 && this.bridgeBundles.length > 0) {
+			ctx.save();
+			ctx.globalAlpha = regionAlpha;
+			ctx.font = `${LABEL_WEIGHT} ${(settings.clusterLabelSize * 0.85) / k}px ${data.fontFamily}`;
+			ctx.textAlign = "center";
+			ctx.textBaseline = "middle";
+			ctx.fillStyle = data.colors.bridge ?? BRIDGE_COLOR;
+			for (const bundle of this.bridgeBundles) {
+				const label = `${bundle.count} bridge${bundle.count === 1 ? "" : "s"}`;
+				ctx.fillText(label, (bundle.ax + bundle.bx) / 2, (bundle.ay + bundle.by) / 2);
+			}
+			ctx.restore();
+		}
+
+		// 9. Fork: the hovered bridge's card — screen space, topmost.
+		if (settings.bridges && this.hoverBridge) this.drawBridgeTooltip(dpr);
 	}
 }

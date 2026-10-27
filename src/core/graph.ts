@@ -63,7 +63,9 @@ import type {
 	GraphNode,
 	ProvenancePoint,
 	GraphSnapshot,
+	GraphBridge,
 } from "./contracts.ts";
+import { isBridgeChain } from "./contracts.ts";
 import { MIN_CLUSTER_SIZE } from "./clusters.ts";
 import { formatChainLine } from "./chains.ts";
 import { attachImpToCommunities, birthSessionOf, birthSessionPartition } from "./session-clusters.ts";
@@ -103,10 +105,6 @@ function chainKey(premises: ReadonlyArray<string>, conclusion: string): string {
  *  step appends one CoverageEntry per message on success ("covered" means
  *  exactly this merge happened). The notes path passes neither and keeps
  *  the whole-file checkpoint. */
-/** The provenance anchor of a cross-source bridge chain (fork,
- *  2026-10-27): the bridger's merge stamps it on its chain lines, and
- *  simplifyChains never drops a chain that carries it. */
-export const BRIDGE_ANCHOR = "bridge";
 
 export interface MergeSource {
 	foldedAt: string;
@@ -255,7 +253,14 @@ export function mergeFindings(
 		const key = chainKey(premises, conclusion);
 		if (assertedByChat.has(key)) return; // this chat already asserted this argument
 		const id = idOfKey.get(key) ?? newGraphChainId();
-		ledgers.appendChain({ id, premises, conclusion, createdAt: now, provenance: pointOf(chatId, source.chainAnchor) });
+		ledgers.appendChain({
+			id,
+			premises,
+			conclusion,
+			createdAt: now,
+			provenance: pointOf(chatId, source.chainAnchor),
+			...(chain.note ? { note: chain.note } : {}),
+		});
 		idOfKey.set(key, id);
 		assertedByChat.add(key);
 		stats.chains!++;
@@ -363,9 +368,7 @@ export function simplifyChains(lines: GraphChain[]): GraphChain[] {
 	// ("central force + the general N = 0 ⟹ L = const law" next to "central
 	// force"), which rule 1 would always drop — the very premise the bridge
 	// exists to show.
-	const bridgeKeys = new Set(
-		[...groups].filter(([, bucket]) => bucket.some((l) => l.provenance.some((pt) => pt.messageId === BRIDGE_ANCHOR))).map(([key]) => key),
-	);
+	const bridgeKeys = new Set([...groups].filter(([, bucket]) => bucket.some(isBridgeChain)).map(([key]) => key));
 	const droppedKeys = new Set<string>();
 	for (const candidates of byConclusion.values()) {
 		candidates.sort(
@@ -447,6 +450,7 @@ export function getGraph(graphStore: Pick<GraphStore, "readNodes" | "readChains"
 			for (const pt of line.provenance) {
 				if (!existing.provenance.some((q) => samePoint(q, pt))) existing.provenance.push(pt);
 			}
+			if (!existing.note && line.note) existing.note = line.note;
 		} else {
 			const chain: GraphChain = { ...line, premises: [...line.premises], provenance: [...line.provenance] };
 			byKey.set(key, chain);
@@ -474,7 +478,10 @@ export function deriveView(graph: DerivedGraph): {
 	edges: GraphEdge[];
 	logicalEdges: GraphEdge[];
 	impLinks: Array<{ id: string; premises: string[]; conclusion: string }>;
+	bridges: GraphBridge[];
 } {
+	const birthOf = new Map(graph.nodes.map((node) => [node.id, birthSessionOf(node)]));
+	const bridges: GraphBridge[] = [];
 	const names: Record<string, { name: string }> = {};
 	for (const node of graph.nodes) names[node.id] = { name: node.name };
 	const live = new Set(graph.nodes.map((node) => node.id));
@@ -496,6 +503,20 @@ export function deriveView(graph: DerivedGraph): {
 	for (const chain of graph.chains) {
 		if (!live.has(chain.conclusion) || !chain.premises.every((premise) => live.has(premise))) continue;
 		for (const premise of chain.premises) emitLogical(premise, chain.conclusion);
+		// Fork (2026-10-27): a bridge is no drawn argument — the canvas gets
+		// one curve per foreign premise, outside the physics.
+		if (isBridgeChain(chain)) {
+			const home = birthOf.get(chain.conclusion);
+			const foreign = chain.premises.filter((p) => birthOf.get(p) !== home);
+			bridges.push({
+				id: chain.id,
+				premises: [...chain.premises],
+				conclusion: chain.conclusion,
+				from: foreign.length > 0 ? foreign : [...chain.premises],
+				...(chain.note ? { note: chain.note } : {}),
+			});
+			continue;
+		}
 		// Single premise: the argument IS a plain arrow — no geometry
 		// point needed (the 1-in/1-out collapse; rendering arc, owner).
 		if (chain.premises.length === 1) {
@@ -516,7 +537,7 @@ export function deriveView(graph: DerivedGraph): {
 		for (const premise of chain.premises) edges.push({ from: premise, to: chain.id });
 		edges.push({ from: chain.id, to: chain.conclusion });
 	}
-	return { nodes: [...graph.nodes, ...impNodes], edges, logicalEdges, impLinks };
+	return { nodes: [...graph.nodes, ...impNodes], edges, logicalEdges, impLinks, bridges };
 }
 
 // ─── the /api/graph payload ──────────────────────────────────────────────────
@@ -605,6 +626,7 @@ export function graphSnapshot(deps: GraphDeps): GraphSnapshot {
 		edges: view.edges,
 		logicalEdges: view.logicalEdges,
 		impLinks: view.impLinks,
+		bridges: view.bridges,
 		chains: graph.chains,
 		sessions,
 		fileSources,

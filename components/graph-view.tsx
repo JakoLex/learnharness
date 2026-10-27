@@ -642,6 +642,17 @@ function GraphSettingsControl({
 							    the Background colors switch above — labels follow
 							    their own clusterLabels toggle. Size is screen px
 							    (constant at any zoom, unlike node labels). */}
+							{/* Fork (2026-10-27): cross-source bridges — dashed curves,
+							    bundled per source pair when zoomed out. */}
+							<label className="flex cursor-pointer items-center justify-between text-[11px] text-muted-foreground">
+								<span>Bridges between sources</span>
+								<input
+									type="checkbox"
+									checked={settings.bridges}
+									onChange={(e) => changeSettings((cur) => ({ ...cur, bridges: e.target.checked }))}
+									className="accent-primary"
+								/>
+							</label>
 							<label className="flex cursor-pointer items-center justify-between text-[11px] text-muted-foreground">
 								<span>Cluster labels</span>
 								<input
@@ -1425,6 +1436,8 @@ export function GraphView({
 			edges: snapshot.edges.map((e) => ({ from: e.from, to: e.to })),
 			logicalEdges: snapshot.logicalEdges.map((e) => ({ from: e.from, to: e.to })),
 			impLinks: snapshot.impLinks,
+			// Fork (2026-10-27): cross-source bridges, drawn apart from edges.
+			bridges: (snapshot.bridges ?? []).map((b) => ({ id: b.id, from: b.from, to: b.conclusion, note: b.note })),
 			clusters: snapshot.clusters.map((c) => ({ id: c.id, label: c.label, members: c.members })),
 			colors: {
 				node: tokenHex(NODE_COLOR_TOKEN),
