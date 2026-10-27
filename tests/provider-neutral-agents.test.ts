@@ -19,6 +19,7 @@ import { runVisualMaker } from "../src/agent/subagents/visual-maker.ts";
 import { runPdfReaderAgent } from "../src/agent/subagents/pdf-reader.ts";
 import type { HeadlessApi } from "../src/agent/subagents/headless.ts";
 import { AUTH_PROVIDER_KEYS } from "../src/core/auth-keys.ts";
+import { LOCAL_PROVIDER_KEYS } from "../src/agent/local-providers.ts";
 import { providerEventsDir } from "../src/agent/provider-events.ts";
 
 const OR_KEY = "dummy-openrouter-MUST-NOT-REACH-other-endpoints";
@@ -245,7 +246,10 @@ describe("provider-neutral raw agent loops", { concurrency: false }, () => {
 			const env = Object.fromEntries(AUTH_PROVIDER_KEYS.map(({ envVar }) => [envVar, `dummy-resolver-${envVar}`]));
 			const models = createModels({ authContext: { env: async (name) => env[name], fileExists: async () => false } });
 			for (const provider of builtinProviders()) models.setProvider(provider);
-			for (const { id, envVar } of AUTH_PROVIDER_KEYS) {
+			// Fork: the LAN providers (local-providers.ts) are not builtins —
+			// they read process.env themselves and are not registered here.
+			const local = new Set<string>(LOCAL_PROVIDER_KEYS.map((p) => p.id));
+			for (const { id, envVar } of AUTH_PROVIDER_KEYS.filter((p) => !local.has(p.id))) {
 				const resolved = await models.getAuth(id);
 				assert.ok(resolved, id);
 				assert.equal(resolved.source, envVar, id);

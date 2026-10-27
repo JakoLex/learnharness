@@ -21,6 +21,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { AUTH_PROVIDER_KEYS, isProviderEnvVar } from "../src/core/auth-keys.ts";
+import { LOCAL_PROVIDER_KEYS } from "../src/agent/local-providers.ts";
 import { builtinProviders } from "../node_modules/@earendil-works/pi-ai/dist/providers/all.js";
 import { findEnvKeys } from "../node_modules/@earendil-works/pi-ai/dist/env-api-keys.js";
 
@@ -55,6 +56,9 @@ function deriveProviders() {
 		const envVar = p.id === "anthropic" ? "ANTHROPIC_API_KEY" : first;
 		rows.push({ id: p.id, envVar, label: p.name });
 	}
+	// Fork: the LAN providers from src/agent/local-providers.ts are keyed
+	// providers of their own, listed next to pi-ai's.
+	rows.push(...LOCAL_PROVIDER_KEYS);
 	rows.sort((a, b) => a.id.localeCompare(b.id));
 	return rows;
 }

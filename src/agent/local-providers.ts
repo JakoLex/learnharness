@@ -66,6 +66,13 @@ function localProvider(id: string, label: string, baseUrl: string, envVar: strin
 	});
 }
 
+/** The auth rows these providers add to AUTH_PROVIDER_KEYS (auth-keys.ts);
+ *  the no-drift test pins the table against pi-ai's builtins plus these. */
+export const LOCAL_PROVIDER_KEYS = [
+	{ id: "llama-swap", envVar: "LLAMA_SWAP_KEY", label: "llama-swap · RTX 3090" },
+	{ id: "slopgate", envVar: "SLOPGATE_KEY", label: "SlopGate" },
+] as const;
+
 const LLAMA_SWAP_URL = process.env.LH_LLAMA_SWAP_URL ?? "http://jakolexpc.fritz.box:8080/v1";
 const SLOPGATE_URL = process.env.LH_SLOPGATE_URL ?? "http://jbkp.fritz.box:8081/v1";
 
