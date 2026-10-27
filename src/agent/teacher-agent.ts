@@ -20,6 +20,7 @@ import { sendToUserTool } from "./tools/send-to-user.ts";
 import { quizInputObject, quizInputProblems } from "../core/question-core.ts";
 import { QUESTION_TOOLS, type EnabledTools } from "../core/pending.ts";
 import { toLlmMessages, nativeInputCause, PRACTICE_PROBLEM_TOOL } from "../core/native-messages.ts";
+import { contextComposition, type ContextComposition } from "../core/context-composition.ts";
 import type { ChatGPTRequestCycle } from "./chatgpt-request-cycle.ts";
 import { usageWasAdmitted } from "./subscription-request-cycle.ts";
 
@@ -106,6 +107,10 @@ export interface AgentBuildOptions {
 	messages?: AgentMessage[];
 	/** Money channel: one call per model request. */
 	onUsage?: StepUsageCollector;
+	/** Context panel (2026-10-28): the assembled request's composition,
+	 *  estimated in prepareRequest just before each model call — the
+	 *  handler pairs it with that call's onUsage. */
+	onContext?: (composition: ContextComposition) => void;
 	/** Tests may pass a bare tool registry to drive deterministic flows.
 	 *  An explicit registry is NEVER toggle-filtered — the caller owns it. */
 	tools?: Record<string, AgentTool<any>>;
@@ -248,6 +253,16 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 				else if (learner) opts.callPurpose.background = false;
 			}
 			opts.requestCycle?.prepare(request);
+			// Context panel: bucket exactly what goes out — the leading
+			// system message carries the prompt and tool declarations. An
+			// estimate must never cost the request.
+			if (opts.onContext) {
+				try {
+					opts.onContext(contextComposition(toLlmMessages(request.context.messages)));
+				} catch (err) {
+					console.error("[context-composition] estimate failed:", err);
+				}
+			}
 		},
 	});
 	if (opts.onUsage) {

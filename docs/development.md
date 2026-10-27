@@ -165,6 +165,8 @@ data/                           chats/ · graph/ (nodes/chains/sessions/coverage
 See [compaction and accounting](compaction-accounting.md) for the local Pi cutoff port,
 measurement-only context meter, and server-side current-catalog pricing. There is no
 pricing-generation step: Pi AI's catalog and public calculator are the authority.
+See [context panel](context-panel.md) for the per-request context breakdown the meter
+opens, and its OpenScience attribution.
 
 **Client-side question tools.** `quiz` and `ask_user_question` have no server `execute`: the tool call streams to the browser, the learner answers in the dock, the client grades via `question-core` and returns the verdict with `addToolOutput` — which fires the SDK continuation so the teacher resumes mid-turn. Options are shuffled deterministically (seeded by toolCallId) so server and client renders match. A pending quiz persisted in the chat record is exactly what makes **resume mid-question free**.
 

@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { subscriptionLabels, subscriptionLabel, type SessionPricing, type TurnUsage } from "@/src/core";
-import { formatTokens, formatUsd, planCostLabel, prettyModel } from "@/components/usage-format";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { subscriptionLabels, type LhMessage, type SessionPricing, type TurnUsage } from "@/src/core";
+import { formatTokens, planCostLabel } from "@/components/usage-format";
 import { ModelControl, catalogLimits, useModelCatalog } from "@/components/model-picker";
+import { ContextDialog } from "@/components/context-dialog";
 
 export function formatContextMeasurement(tokens: number | null, limit: number | null): string {
 	const numerator = tokens === null ? "?" : formatTokens(tokens);
@@ -14,7 +15,9 @@ export function formatContextMeasurement(tokens: number | null, limit: number | 
  * The below-composer stats bar (wave 4 observability): the session's
  * money/context footprint as one quiet row beneath the composer —
  * LEFT-aligned: context window + session cost; RIGHT-aligned: model +
- * thinking level. Clicking the left side opens the per-turn detail popover.
+ * thinking level. Clicking the left side opens the context panel
+ * (components/context-dialog.tsx, 2026-10-28 — it replaced the per-turn
+ * session-stats popover and carries its turns list).
  *
  *  Pre-chat views (home, /chat/new) render NO left side at all (owner,
  *  wave 7 sweep: the knowledge-context budget slider that used to live
@@ -35,6 +38,8 @@ export function StatsBar({
 	chatId,
 	leadingSlot,
 	onModelChange,
+	messages = [],
+	createdAt,
 }: {
 	turns: TurnUsage[];
 	contextTokens?: number | null;
@@ -55,37 +60,19 @@ export function StatsBar({
 	 *  composer's teach | practice switch rides here — before the session
 	 *  data (which renders nothing pre-chat on that surface). */
 	leadingSlot?: ReactNode;
+	/** The session's native transcript — the context panel's message
+	 *  counts, last activity, and pre-panel breakdown fallback. */
+	messages?: readonly LhMessage[];
+	/** The record's creation time (the context panel's Session card). */
+	createdAt?: string;
 }) {
 	const [open, setOpen] = useState(false);
+	const close = useCallback(() => setOpen(false), []);
 	const [selectedModel, setSelectedModel] = useState<string | undefined>();
 	const modelChanged = useCallback((model: string | undefined) => {
 		setSelectedModel(model);
 		onModelChange?.(model);
 	}, [onModelChange]);
-	// Same dropdown discipline as the model control (owner, df4433f treatment,
-	// stats round 1): close on any pointerdown outside the bar or on Escape.
-	const barRef = useRef<HTMLDivElement>(null);
-	useEffect(() => {
-		if (!open) return;
-		const onPointerDown = (e: PointerEvent) => {
-			if (barRef.current && !barRef.current.contains(e.target as Node)) setOpen(false);
-		};
-		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.key === "Escape") {
-				// THE ONE-ESC LAW (keyboard round 2026-10-06): claim — the
-				// window chain must not also act under this popover.
-				e.preventDefault();
-				e.stopPropagation();
-				setOpen(false);
-			}
-		};
-		document.addEventListener("pointerdown", onPointerDown);
-		document.addEventListener("keydown", onKeyDown);
-		return () => {
-			document.removeEventListener("pointerdown", onPointerDown);
-			document.removeEventListener("keydown", onKeyDown);
-		};
-	}, [open]);
 	// Catalog-only denominator; the picker reports its effective selection.
 	// Missing/pending catalog means usage-only, never a hardcoded maximum.
 	const { catalog } = useModelCatalog();
@@ -108,87 +95,44 @@ export function StatsBar({
 			// control wave caught this live: buttons rendered, clicks never landed).
 			className="pointer-events-auto relative flex items-center justify-between gap-3 px-3 pt-2 text-xs text-muted-foreground"
 		>
-			{/* The summary button + its popover: the popover anchors to this
-			    wrapper, CENTERED over the button itself (owner, stats round 2)
-			    — not over the whole bar row, which made it line up oddly. The
-			    outside-close ref anchors HERE too (owner, round 3): on the whole
-			    bar it wrapped the model control, so clicking model/thinking never
-			    counted as outside — the asymmetry the owner observed. */}
 			{/* The leading slot (2026-10-04): the leftmost control surface —
 			    the home composer's mode switch. */}
 			{leadingSlot}
 			{/* The left side: the session-data summary — only once a session
 			    exists (turns). Pre-chat renders nothing (see the header). */}
 			{(chatId || turns.length > 0) && (
-			<div ref={barRef} className="relative">
-				{/* No tooltip — the numbers describe themselves and the popover
-			    speaks on click (owner, subtlety round 2026-09-25). */}
-			<button
-				type="button"
-				onClick={() => setOpen((o) => !o)}
-				aria-expanded={open}
-				data-testid="stats-summary"
-				className="flex items-center gap-1.5 tabular-nums transition-colors hover:text-foreground"
-			>
-				<span data-testid="stats-context">
-					{contextLabel}
-				</span>
-				<span aria-hidden>·</span>
-				<span data-testid="stats-cost">{costLabel}</span>
-			</button>
-				{open && (
-					<div
-						data-testid="stats-detail"
-						className="absolute bottom-full left-1/2 z-40 mb-1.5 w-72 -translate-x-1/2 rounded-xl border bg-card p-3 text-xs shadow-xl"
+				<>
+					{/* No tooltip — the numbers describe themselves and the panel
+					    speaks on click (owner, subtlety round 2026-09-25). */}
+					<button
+						type="button"
+						onClick={() => setOpen(true)}
+						aria-haspopup="dialog"
+						aria-expanded={open}
+						data-testid="stats-summary"
+						className="flex items-center gap-1.5 tabular-nums transition-colors hover:text-foreground"
 					>
-						<div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-							Session stats
-						</div>
-						<div className="flex flex-col gap-1 text-muted-foreground">
-							<div className="flex justify-between gap-2">
-								<span>Context (last call)</span>
-								<span className="tabular-nums text-card-foreground">
-									{contextLabel}
-								</span>
-							</div>
-							<div className="flex justify-between gap-2">
-								<span>{subscription ? "Usage" : "Total cost"}</span>
-								<span className="tabular-nums text-card-foreground">{costLabel}</span>
-							</div>
-							{providers.includes("ChatGPT") && <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noreferrer" className="underline underline-offset-2">Manage ChatGPT usage</a>}
-							{unpriced > 0 && (
-								<div className="flex justify-between gap-2">
-									<span>Unpriced turns</span>
-									<span className="tabular-nums text-card-foreground">{unpriced}</span>
-								</div>
-							)}
-						</div>
-						{turns.length > 0 && (
-							<>
-								<div className="mb-1 mt-2.5 border-t pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-									Turns
-								</div>
-								<ul className="flex max-h-56 flex-col gap-1 overflow-y-auto">
-									{turns.map((turn, i) => {
-										const c = pricing?.turnCosts[turn.id] ?? null;
-										return (
-											<li key={`${turn.messageId}-${i}`} className="flex items-center justify-between gap-2">
-												<span className="truncate text-muted-foreground">
-													#{i + 1} · {prettyModel(turn.model, true)}
-												</span>
-												<span className="flex shrink-0 items-center gap-2 tabular-nums text-card-foreground">
-													<span className="text-muted-foreground">{turn.steps.length} steps</span>
-													<span>{subscriptionLabel(turn.model) ?? (c === null ? "—" : formatUsd(c))}</span>
-												</span>
-											</li>
-										);
-									})}
-								</ul>
-							</>
-						)}
-					</div>
-				)}
-			</div>
+						<span data-testid="stats-context">
+							{contextLabel}
+						</span>
+						<span aria-hidden>·</span>
+						<span data-testid="stats-cost">{costLabel}</span>
+					</button>
+					<ContextDialog
+						open={open}
+						onClose={close}
+						turns={turns}
+						messages={messages}
+						contextTokens={contextTokens}
+						limit={limit}
+						pricing={pricing}
+						createdAt={createdAt}
+						costLabel={costLabel}
+						unpriced={unpriced}
+						subscription={subscription}
+						providers={providers}
+					/>
+				</>
 			)}
 			{/* The middle slot: dictation (owner, 2026-09-17). flex-1 lets the
 			    meter expand into the row's free width; justify-center keeps the

@@ -914,6 +914,8 @@ export function Chat({
 	// fetches the record. No turns yet → the bar renders "—" everywhere.
 	const [turns, setTurns] = useState<TurnUsage[]>([]);
 	const [pricing, setPricing] = useState<SessionPricing | undefined>();
+	// The record's creation time — the context panel's Session card.
+	const [createdAt, setCreatedAt] = useState<string | undefined>();
 	// The per-chat model control state (model-picker writes via PUT; the
 	// record is the source of truth, lifted here so the stats bar re-renders).
 	// The dock's reserved tail height (DockOverlay reports it; the spacer at
@@ -927,9 +929,10 @@ export function Chat({
 		try {
 			const res = await fetch(`/api/chats/${chatId}`);
 			if (!res.ok) return;
-			const record = (await res.json()) as { turns?: TurnUsage[]; pricing?: SessionPricing };
+			const record = (await res.json()) as { turns?: TurnUsage[]; pricing?: SessionPricing; createdAt?: string };
 			if (Array.isArray(record.turns)) setTurns(record.turns);
 			setPricing(record.pricing);
+			if (typeof record.createdAt === "string") setCreatedAt(record.createdAt);
 		} catch {
 			// transient blip: stats stay on the last known figures
 		}
@@ -1691,6 +1694,8 @@ export function Chat({
 					turns={turns}
 					contextTokens={contextTokens}
 					pricing={pricing}
+					nativeMessages={nativeMessages}
+					createdAt={createdAt}
 					onReserve={setDockReserve}
 					dictationSlot={<DictationBar dictation={dictation} />}
 					dictationCancel={dictation.cancel}
@@ -1917,6 +1922,8 @@ function DockOverlay({
 	turns,
 	contextTokens,
 	pricing,
+	nativeMessages,
+	createdAt,
 	composer,
 	onSubmitAnswer,
 	chatId,
@@ -1953,6 +1960,10 @@ function DockOverlay({
 	turns: TurnUsage[];
 	contextTokens: number | null;
 	pricing?: SessionPricing;
+	/** The native transcript + record creation time — the context panel's
+	 *  counts, activity, and pre-panel breakdown fallback. */
+	nativeMessages: readonly LhMessage[];
+	createdAt?: string;
 	composer: React.ReactNode;
 	onSubmitAnswer: (output: QuestionAnswerData) => void;
 	/** The model control's pass-through (the stats bar hosts it). */
@@ -2408,6 +2419,8 @@ function DockOverlay({
 						turns={turns}
 						contextTokens={contextTokens}
 						pricing={pricing}
+						messages={nativeMessages}
+						createdAt={createdAt}
 						dictationSlot={dictationSlot}
 						chatId={chatId}
 						onModelChange={onModelChange}

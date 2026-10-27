@@ -7,6 +7,7 @@
  */
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { LhMessage } from "../native-messages.ts";
+import type { ContextComposition } from "../context-composition.ts";
 import type { Phase3 } from "../phases.ts";
 import type { PlanNodeStatus, PlanTree } from "./plan.ts";
 import type { EmissionStats } from "./graph.ts";
@@ -131,6 +132,10 @@ export interface CallUsage {
 	cacheWrite1hTokens?: number;
 	/** The reasoning portion of the output tokens. */
 	reasoningTokens: number | undefined;
+	/** What filled this call's request, estimated per bucket from the
+	 *  assembled request (context panel, 2026-10-28). Conversation agents
+	 *  only; absent on calls recorded before it existed. */
+	context?: ContextComposition;
 }
 
 /** One billing turn: one full invocation of the teacher (a client turn or a

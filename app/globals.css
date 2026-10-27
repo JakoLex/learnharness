@@ -65,6 +65,14 @@
 	--lh-prose-leading: 1.5;
 	/* Markdown heading weight (appearance settings; 900 = the Black cut). */
 	--lh-heading-weight: 900;
+	/* Context panel buckets (components/context-dialog.tsx, 2026-10-28):
+	   one hue per bucket, after OpenScience's context panel. */
+	--lh-ctx-system: #9aa7b8;
+	--lh-ctx-definitions: #d0915c;
+	--lh-ctx-text: #73b27c;
+	--lh-ctx-reasoning: #b8a1d9;
+	--lh-ctx-tool: #cfa04f;
+	--lh-ctx-image: #6fb2b5;
 }
 
 /* The app is always dark (<html class="dark">); mirror the same values so
@@ -100,6 +108,13 @@
 	--lh-prose-leading: 1.5;
 	/* Markdown heading weight (appearance settings; 900 = the Black cut). */
 	--lh-heading-weight: 900;
+	/* Same context-panel buckets as the block above. */
+	--lh-ctx-system: #9aa7b8;
+	--lh-ctx-definitions: #d0915c;
+	--lh-ctx-text: #73b27c;
+	--lh-ctx-reasoning: #b8a1d9;
+	--lh-ctx-tool: #cfa04f;
+	--lh-ctx-image: #6fb2b5;
 }
 
 /* CMU Serif bold (titles) — bundled local file, no CDN dependency. */

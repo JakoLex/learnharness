@@ -39,6 +39,7 @@ import { jobStore } from "../src/store/jobs.ts";
 import { buildAnswer, dismissedAnswer, normalizeOptions, resolveCorrect, type QuestionData } from "../src/core/question-core.ts";
 import { danglingQuestionOf, endsInDismissal, needsContinuation, newAnswerResult, newUserMessage } from "../src/core/native-messages.ts";
 import { projectView } from "../src/core/view.ts";
+import { contextComposition, type ContextComposition } from "../src/core/context-composition.ts";
 import type { PiEngine } from "../src/agent/models.ts";
 import type { LhMessage } from "../src/core/native-messages.ts";
 
@@ -942,6 +943,28 @@ describe("canonical persistence failures", () => {
 			chatStore.appendTurnUsage = appendUsage;
 			unregisterLiveAgent(chat.id);
 		}
+	});
+
+	it("records each billed call's request composition — exactly what the provider received (context panel)", async () => {
+		const seen: ContextComposition[] = [];
+		const { engine } = scriptedTeacher(() => [
+			(context) => {
+				seen.push(contextComposition(context.messages));
+				return fauxAssistantMessage([fauxThinking("Synthetic plan."), fauxText("Synthetic response")]);
+			},
+		]);
+		const chat = createConfiguredChat("Test: context composition");
+		createdChats.push(chat.id);
+		await drainTurn(post(chat.id, { type: "text", text: "teach me the solar system" }), opts =>
+			createTeacherAgent(undefined, { engine, messages: opts.messages, onUsage: opts.onUsage, onContext: opts.onContext }));
+		const steps = chatStore.getChat(chat.id)!.turns!.at(-1)!.steps;
+		assert.equal(steps.length, 1);
+		assert.deepEqual(steps[0]!.context, seen[0], "the recorded estimate is the provider-received request's");
+		const recorded = steps[0]!.context!;
+		assert.ok(recorded.system > 0, "the leading system message carries the prompt");
+		assert.ok(recorded.definitions > 0, "and the tool declarations");
+		assert.ok(recorded.text > 0, "the learner's message");
+		assert.equal(recorded.reasoning, 0, "this call's own reply is not part of its request");
 	});
 });
 

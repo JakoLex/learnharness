@@ -60,6 +60,7 @@ import {
 } from "../core/input-events.ts";
 import { steerDelivered } from "../core/contracts.ts";
 import type {CallUsage} from "../core/contracts.ts";
+import type { ContextComposition } from "../core/context-composition.ts";
 
 /**
  * One chat turn over the server-owned native record. Framework-free (plain
@@ -372,6 +373,10 @@ export async function handleChatInput(
 	// append-only turns log at onFinish — idempotent per turn id.
 	const turnUsageId = crypto.randomUUID();
 	const steps: CallUsage[] = [];
+	// Context panel: prepareRequest estimates the request just before each
+	// call; the call's usage (message_end) claims it. An unbilled call
+	// (aborted, refused usage) never claims — the next request overwrites.
+	let callContext: ContextComposition | undefined;
 	const collectUsage = (usage: Usage) => {
 		steps.push({
 			inputTokens: usage.input,
@@ -381,7 +386,9 @@ export async function handleChatInput(
 			cacheWrite1hTokens: usage.cacheWrite1h ?? 0,
 			// Optional in pi's Usage — persisted as 0, never dropped.
 			reasoningTokens: usage.reasoning ?? 0,
+			...(callContext ? { context: callContext } : {}),
 		});
+		callContext = undefined;
 	};
 
 	// AGENT CONSTRUCTION BRANCH (docs/probe-teach-split.md §2): the transcript
@@ -427,6 +434,9 @@ export async function handleChatInput(
 		requestCycle,
 		messages: asAgentMessages(agentMessages),
 		onUsage: collectUsage,
+		onContext: (composition) => {
+			callContext = composition;
+		},
 		toolToggles: effective.agent.tools,
 		// Debug (owner, 2026-10-04): teacher/prober raw provider events under
 		// LH_PROVIDER_EVENTS=1 (provider-events.ts); no-op otherwise.
