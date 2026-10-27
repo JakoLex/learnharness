@@ -113,8 +113,30 @@ describe("deriveView and bridges (drawn apart from the arguments)", () => {
 
 	it("hands the canvas the foreign premise only, with the note", () => {
 		assert.deepEqual(deriveView(g).bridges, [
-			{ id: "arg_br", premises: ["a1", "b1"], conclusion: "b2", from: ["a1"], note: "a1 together with b1 gives b2." },
+			{
+				id: "arg_br",
+				kind: "bridge",
+				premises: ["a1", "b1"],
+				conclusion: "b2",
+				from: ["a1"],
+				source: "src_b",
+				note: "a1 together with b1 gives b2.",
+			},
 		]);
+	});
+
+	it("draws an ordinary chain through another source's idea as a shared link, not as an argument", () => {
+		const shared = {
+			nodes: [node("a1", "src_a", "src_b"), node("b1", "src_b"), node("b2", "src_b"), node("b3", "src_b")],
+			chains: [
+				{ id: "arg_s", premises: ["a1", "b1"], conclusion: "b2", createdAt: "", provenance: [{ chatId: "src_b", messageId: "" }] },
+				{ id: "arg_in", premises: ["b1", "b2"], conclusion: "b3", createdAt: "", provenance: [{ chatId: "src_b", messageId: "" }] },
+			],
+		} as unknown as DerivedGraph;
+		const view = deriveView(shared);
+		assert.deepEqual(view.bridges.map((b) => [b.id, b.kind, b.from]), [["arg_s", "shared", ["a1"]]]);
+		assert.deepEqual(view.impLinks.map((l) => l.id), ["arg_in"]); // same-source chains still draw as arguments
+		assert.ok(!view.nodes.some((n) => n.id === "arg_s"));
 	});
 
 	it("keeps every premise in the logical edges", () => {

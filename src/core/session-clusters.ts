@@ -121,8 +121,10 @@ export function attachImpToCommunities(
 	const live = new Set(propositions.map((node) => node.id));
 	for (const chain of chains) {
 		if (chain.premises.length < 2) continue;
-		if (isBridgeChain(chain)) continue; // fork: bridges draw no implication node
 		if (!live.has(chain.conclusion) || !chain.premises.every((p) => live.has(p))) continue;
+		// Fork: bridges and other cross-source chains draw no implication node.
+		const home = birthById.get(chain.conclusion);
+		if (isBridgeChain(chain) || chain.premises.some((p) => birthById.get(p) !== home)) continue;
 		const key = impClusterKey(chain, (id) => birthById.get(id) ?? null);
 		const community = key === null ? undefined : communities.find((c) => c.id === key);
 		if (!community) continue;

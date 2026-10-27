@@ -108,6 +108,9 @@ export const isImpNodeId = (id: string): boolean => id.startsWith("arg_");
  *  bundled per source pair when zoomed out; the note shows on hover. */
 export interface CanvasBridge {
 	id: string;
+	/** "bridge" = the bridger's (dashed); "shared" = an ordinary chain that
+	 *  crosses through a shared idea (dotted). Absent = "bridge". */
+	kind?: "bridge" | "shared";
 	from: string[];
 	to: string;
 	note?: string;
@@ -793,6 +796,7 @@ export class GraphCanvasRenderer {
 	// Fork (2026-10-27): bridge geometry — dashed curves, heads, hit-test
 	// polylines, and the zoomed-out bundles between cluster centroids.
 	private bridgeShafts: Path2D = new Path2D();
+	private sharedShafts: Path2D = new Path2D();
 	private bridgeHeads: Path2D = new Path2D();
 	private bridgeHits: BridgeHit[] = [];
 	private bridgeBundles: BridgeBundle[] = [];
@@ -1477,10 +1481,12 @@ export class GraphCanvasRenderer {
 	 *  and settings exactly like the edges. */
 	private buildBridges(isVisible: (id: string) => boolean, nodeR: number, arrowLen: number): void {
 		const shafts = new Path2D();
+		const shared = new Path2D();
 		const heads = new Path2D();
 		const hits: BridgeHit[] = [];
 		const bundles: BridgeBundle[] = [];
 		this.bridgeShafts = shafts;
+		this.sharedShafts = shared;
 		this.bridgeHeads = heads;
 		this.bridgeHits = hits;
 		this.bridgeBundles = bundles;
@@ -1494,8 +1500,9 @@ export class GraphCanvasRenderer {
 				if (!a || !isVisible(fromId)) continue;
 				const curve = bridgeCurve(a, b, nodeR, nodeR, arrowLen);
 				if (!curve) continue;
-				shafts.moveTo(curve.start.x, curve.start.y);
-				shafts.quadraticCurveTo(curve.ctrl.x, curve.ctrl.y, curve.end.x, curve.end.y);
+				const path = bridge.kind === "shared" ? shared : shafts;
+				path.moveTo(curve.start.x, curve.start.y);
+				path.quadraticCurveTo(curve.ctrl.x, curve.ctrl.y, curve.end.x, curve.end.y);
 				heads.moveTo(curve.head.tip.x, curve.head.tip.y);
 				heads.lineTo(curve.head.left.x, curve.head.left.y);
 				heads.lineTo(curve.head.right.x, curve.head.right.y);
@@ -1977,6 +1984,9 @@ export class GraphCanvasRenderer {
 			ctx.lineWidth = width / k;
 			ctx.setLineDash([6 / k, 4 / k]);
 			ctx.stroke(this.bridgeShafts);
+			ctx.setLineDash([1 / k, 4 / k]); // shared-idea links: dotted
+			ctx.lineCap = "round";
+			ctx.stroke(this.sharedShafts);
 			ctx.setLineDash([]);
 			ctx.fill(this.bridgeHeads);
 			if (this.hoverBridge) {

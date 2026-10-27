@@ -1437,7 +1437,19 @@ export function GraphView({
 			logicalEdges: snapshot.logicalEdges.map((e) => ({ from: e.from, to: e.to })),
 			impLinks: snapshot.impLinks,
 			// Fork (2026-10-27): cross-source bridges, drawn apart from edges.
-			bridges: (snapshot.bridges ?? []).map((b) => ({ id: b.id, from: b.from, to: b.conclusion, note: b.note })),
+			bridges: (snapshot.bridges ?? []).map((b) => {
+				const source = b.source ? (snapshot.sessions[b.source] ?? snapshot.fileSources[b.source] ?? b.source) : "its source";
+				return {
+					id: b.id,
+					kind: b.kind,
+					from: b.from,
+					to: b.conclusion,
+					note:
+						b.kind === "shared"
+							? `No bridge: a chain of ${source} that crosses over because one of its ideas was merged with an idea another source holds.`
+							: b.note,
+				};
+			}),
 			clusters: snapshot.clusters.map((c) => ({ id: c.id, label: c.label, members: c.members })),
 			colors: {
 				node: tokenHex(NODE_COLOR_TOKEN),

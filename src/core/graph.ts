@@ -503,16 +503,21 @@ export function deriveView(graph: DerivedGraph): {
 	for (const chain of graph.chains) {
 		if (!live.has(chain.conclusion) || !chain.premises.every((premise) => live.has(premise))) continue;
 		for (const premise of chain.premises) emitLogical(premise, chain.conclusion);
-		// Fork (2026-10-27): a bridge is no drawn argument — the canvas gets
-		// one curve per foreign premise, outside the physics.
-		if (isBridgeChain(chain)) {
-			const home = birthOf.get(chain.conclusion);
-			const foreign = chain.premises.filter((p) => birthOf.get(p) !== home);
+		// Fork (2026-10-27): a chain that crosses sources — the bridger's, or
+		// an ordinary one running through an idea another source holds — is
+		// no drawn argument: the canvas gets one curve per foreign premise,
+		// outside the physics, so sources stay apart.
+		const home = birthOf.get(chain.conclusion);
+		const foreign = chain.premises.filter((p) => birthOf.get(p) !== home);
+		if (isBridgeChain(chain) || foreign.length > 0) {
+			const source = chain.provenance[0]?.chatId;
 			bridges.push({
 				id: chain.id,
+				kind: isBridgeChain(chain) ? "bridge" : "shared",
 				premises: [...chain.premises],
 				conclusion: chain.conclusion,
 				from: foreign.length > 0 ? foreign : [...chain.premises],
+				...(source ? { source } : {}),
 				...(chain.note ? { note: chain.note } : {}),
 			});
 			continue;

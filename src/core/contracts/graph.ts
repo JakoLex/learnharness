@@ -65,16 +65,22 @@ export const BRIDGE_ANCHOR = "bridge";
 export const isBridgeChain = (chain: Pick<GraphChain, "provenance">): boolean =>
 	chain.provenance.some((pt) => pt.messageId === BRIDGE_ANCHOR);
 
-/** A bridge as the canvas draws it (fork, 2026-10-27): one curve from each
- *  premise born in ANOTHER source than the conclusion — the same-source
- *  premises are already connected through that source's own chains. The
- *  logical edges keep every premise. */
+/** A cross-source link as the canvas draws it (fork, 2026-10-27): one
+ *  curve from each premise born in ANOTHER source than the conclusion —
+ *  the same-source premises are already connected through that source's
+ *  own chains. The logical edges keep every premise.
+ *  kind "bridge": the bridger's chain (with its reason in `note`);
+ *  kind "shared": an ordinary chain of one source that crosses over
+ *  because one of its ideas was linked to a node another source holds. */
 export interface GraphBridge {
 	id: string;
+	kind: "bridge" | "shared";
 	premises: string[];
 	conclusion: string;
 	/** The premises whose birth source differs from the conclusion's. */
 	from: string[];
+	/** The source that asserted the chain (its first provenance point). */
+	source?: string;
 	note?: string;
 }
 
