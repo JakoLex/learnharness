@@ -121,6 +121,9 @@ export const extraction = createExtractionPipeline({
 	// refuses BEFORE any batch runs (the typed throw), never mid-run.
 	providerKeyMissing: (provider, tier) =>
 		providerKeyPresent(provider) ? null : providerKeyMissingEnvelope(provider, [tier]),
+	// Fork (2026-10-27): cross-source bridges after each completed notes
+	// import; LH_BRIDGES=0 turns them off (POST /api/graph/bridge still works).
+	bridgeAfterImport: process.env.LH_BRIDGES !== "0",
 });
 
 

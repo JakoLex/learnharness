@@ -252,7 +252,7 @@ const auditSchema = Type.Object({
 			id: Type.String({ description: 'The proposition id from the findings ("p1", …).' }),
 			linkTo: Type.String({
 				description:
-					"The id of the EXISTING graph node this proposition IS — your identity verdict. EQUIVALENCE BIAS (2026-09-27): paraphrases, rewordings, and compressions of the same claim MERGE; only genuinely distinct propositions stay apart.",
+					"The id of the EXISTING graph node this proposition IS — your identity verdict. Only the SAME claim merges (paraphrase, other notation or language); same topic, overview, premise, consequence or special case stays apart. When in doubt, do not link.",
 			}),
 		}),
 		{ description: "Identity verdicts — which findings propositions ARE existing graph nodes. A proposition absent from here = create a new node. Pass [] when none — never omit the field." },
@@ -562,10 +562,15 @@ IDENTITY — links, per proposition:
 - If yes: add { "id": <its proposition id>, "linkTo": <that node's id> } to "links". The session's phrasings join
   its aliases and its provenance; the node keeps its existing name.
 - If no: add nothing — a new node is created with the extractor's name as its label.
-- EQUIVALENCE BIAS (owner ruling): paraphrases, rewordings, and compressions of the same claim MERGE. When two
-  statements are the same claim at different precision or from different angles, LINK them. Only genuinely distinct
-  propositions — different claims about the world — stay apart. You are NOT guarding against wrong merges; you are
-  hunting for right ones.
+- SAME CLAIM, NOT SAME TOPIC: paraphrases, rewordings, other notation and other languages of the SAME claim MERGE.
+  Do NOT link when the existing node merely shares the topic, summarizes a chapter or course that contains this
+  claim, is a premise or a consequence of it, is a special case or a generalization of it, or is a neighboring
+  result. "The Runge–Lenz vector is conserved" and "Kepler's three laws hold" are different claims; "the two-body
+  problem separates into centre-of-mass and relative motion" is not "systems of mass points" in general. An
+  overview statement that lists several topics is never the identity of one specific result.
+- WHEN IN DOUBT, KEEP THEM APART: a missed merge leaves a harmless near-duplicate, but a wrong merge corrupts the
+  graph — the node keeps its OLD name and statement, and every chain of the new proposition then points at the
+  wrong idea.
 
 Your deliverable is ONLY the identity verdicts: "links". NEVER restate the propositions —
 the merger already has them. You NEVER create relations between propositions — they come from the
@@ -605,6 +610,147 @@ function runAuditor(
 	});
 }
 
+// ─── the bridger (fork, 2026-10-27) ──────────────────────────────────────────
+//
+// Each source is extracted on its own: the extractor sees only its own
+// source's digest, the auditor only links identical claims. Sources
+// therefore meet only where the SAME proposition occurs in both — a general
+// theorem in one lecture never derives its special case in another. The
+// bridger runs once per finished import: it reads the source's propositions,
+// explores the rest of the graph with the auditor's tools, and proposes
+// chains that cross sources. validateBridges() is the deterministic gate
+// (existing ids, really cross-source, no cycle); the merger appends what
+// passes under the source's provenance, so deleting the source takes its
+// bridges with it.
+
+const BRIDGE_INSTRUCTIONS = `You are the bridging stage of a learning application's knowledge graph. The graph holds
+propositions (true ideas) and chains: premises that JOINTLY entail a conclusion. Every source (a teaching session or
+an imported notes file) was extracted on its own, so derivations only run INSIDE one source; sources meet only where
+the identical proposition occurs in both. Your job: find the REAL derivations that run ACROSS sources — where an idea
+of one source follows from ideas established in another.
+
+You get the propositions of ONE source (THIS SOURCE). Explore the rest of the graph with your tools: call
+list_sessions ONCE, read the plausibly related sessions with list_propositions, use find for specific concepts.
+Then submit chains where:
+- every premise and the conclusion is an EXISTING node id, copied verbatim;
+- the chain mixes sources: at least one node of THIS SOURCE and at least one node of another source;
+- the premises JOINTLY ENTAIL the conclusion — a derivation, a special case of a general theorem, a definition or
+  theorem applied to a concrete setting (e.g. a general inner-product-space result ⟹ its form in ℝ³). Shared topic,
+  shared vocabulary, "both are about X", analogies and historical connections are NOT chains;
+- the direction is upward: premises are the more general or more fundamental ideas, the conclusion follows from them;
+- the conclusion is not already derivable from its premises through existing chains, and is not itself used to
+  derive any of its premises.
+
+Quality over quantity: a few correct bridges beat many loose ones. When the sources share no real derivation, submit
+an empty list. For each chain give a one-sentence reason (why the premises entail the conclusion). Your entire
+deliverable is ONE submit_bridges call; include "chains" even when empty.`;
+
+const bridgeSchema = Type.Object({
+	chains: Type.Array(
+		Type.Object({
+			premises: Type.Array(Type.String(), {
+				minItems: 1,
+				description: "Existing node ids (verbatim) that JOINTLY entail the conclusion.",
+			}),
+			conclusion: Type.String({ description: "The existing node id (verbatim) that follows from the premises." }),
+			reason: Type.String({ description: "One sentence: why the premises entail the conclusion." }),
+		}),
+		{ description: "Cross-source derivations. Pass [] when there are none — never omit the field." },
+	),
+});
+
+export interface BridgeProposal {
+	premises: string[];
+	conclusion: string;
+	reason: string;
+}
+
+function runBridger(
+	engine: PiEngine | undefined,
+	sourceId: string,
+	prompt: string,
+	signal: AbortSignal | undefined,
+	onStep: (usage: Usage, model: string, step: number, finishReason: string, tools: string) => void,
+	tools: Record<string, AgentTool<any>>,
+	knownIds: ReadonlySet<string>,
+): Promise<BridgeProposal[]> {
+	return runSubmitAgent({
+		// Unknown ids are the one defect worth a retry (typos, invented
+		// ids); every other rejection is a verdict for validateBridges.
+		validate: (chains: BridgeProposal[]) => {
+			const unknown = [...new Set(chains.flatMap((c) => [...c.premises, c.conclusion]))].filter((id) => !knownIds.has(id));
+			return unknown.length === 0
+				? null
+				: `Unknown node id(s): ${unknown.join(", ")}. Copy ids verbatim from list_propositions / find, or drop those chains.`;
+		},
+		role: "auditor",
+		chatId: sourceId,
+		toolName: "submit_bridges",
+		toolDescription: "Submit the cross-source chains (premises + conclusion + reason, existing ids only).",
+		parameters: bridgeSchema,
+		fill: (raw: Static<typeof bridgeSchema>) => raw.chains,
+		systemPrompt: BRIDGE_INSTRUCTIONS,
+		prompt,
+		engine,
+		signal,
+		onStep,
+		neverSubmitted: "the bridger never submitted its chains",
+		extraTools: tools,
+		maxTurns: 20,
+		prepareArguments: healStringifiedArrays,
+	});
+}
+
+/** The deterministic gate behind the bridger (exported for tests): a
+ *  proposal passes only when every endpoint exists, the chain really
+ *  crosses sources (one node of `sourceId`, one node without it), the
+ *  conclusion is not among its premises, and adding it closes no cycle
+ *  (no premise is reachable from the conclusion over the existing chains
+ *  plus the bridges accepted before it). */
+export function validateBridges(
+	graph: DerivedGraph,
+	sourceId: string,
+	proposals: BridgeProposal[],
+): { accepted: BridgeProposal[]; rejected: { proposal: BridgeProposal; why: string }[] } {
+	const nodes = new Map(graph.nodes.map((n) => [n.id, n]));
+	const ours = (id: string) => nodes.get(id)!.provenance.some((pt) => pt.chatId === sourceId);
+	const next = new Map<string, Set<string>>();
+	const addEdge = (from: string, to: string) => {
+		if (!next.has(from)) next.set(from, new Set());
+		next.get(from)!.add(to);
+	};
+	for (const c of graph.chains) for (const p of c.premises) addEdge(p, c.conclusion);
+	const reaches = (from: string, targets: Set<string>): boolean => {
+		const seen = new Set<string>([from]);
+		const stack = [from];
+		while (stack.length > 0) {
+			const id = stack.pop()!;
+			if (targets.has(id)) return true;
+			for (const n of next.get(id) ?? []) if (!seen.has(n)) (seen.add(n), stack.push(n));
+		}
+		return false;
+	};
+	const accepted: BridgeProposal[] = [];
+	const rejected: { proposal: BridgeProposal; why: string }[] = [];
+	for (const proposal of proposals) {
+		const premises = [...new Set(proposal.premises)];
+		const ids = [...premises, proposal.conclusion];
+		const missing = ids.filter((id) => !nodes.has(id));
+		let why: string | undefined;
+		if (missing.length > 0) why = `unknown id(s) ${missing.join(", ")}`;
+		else if (premises.includes(proposal.conclusion)) why = "conclusion among its premises";
+		else if (!ids.some(ours) || ids.every(ours)) why = "does not cross sources";
+		else if (reaches(proposal.conclusion, new Set(premises))) why = "would close a cycle";
+		if (why) {
+			rejected.push({ proposal, why });
+			continue;
+		}
+		accepted.push({ ...proposal, premises });
+		for (const p of premises) addEdge(p, proposal.conclusion);
+	}
+	return { accepted, rejected };
+}
+
 // ─── the pipeline status registry ─────────────────────────────────────────────
 
 /** The pipeline phases, in order — what the home status endpoint shows.
@@ -619,7 +765,8 @@ function runAuditor(
  *  audit+merge critical section is queued behind another job's; the
  *  extractor is done but the auditor may not start until the graph is
  *  stable. */
-export type ExtractionPhase = "queued" | "extracting" | "waiting" | "auditing" | "merging";
+// "bridging" (fork, 2026-10-27): the cross-source pass after an import.
+export type ExtractionPhase = "queued" | "extracting" | "waiting" | "auditing" | "bridging" | "merging";
 
 /** One in-flight pipeline run. Module-level: one process, one registry.
  *  Exported for the status payload's consumer typing (the dock). */
@@ -740,6 +887,10 @@ export interface ExtractionPipelineDeps extends GraphDeps, ExtractionModels {
 	 *  callers wire the live effective settings (extraction-UX redesign,
 	 *  2026-09-24). */
 	getChunkTokens?: () => number;
+	/** Fork (2026-10-27): run the cross-source bridger after every
+	 *  completed notes import. Off unless the composition root turns it on,
+	 *  so pipelines built by tests keep their exact engine scripts. */
+	bridgeAfterImport?: boolean;
 }
 
 export interface NotesImportInput {
@@ -773,6 +924,12 @@ export interface ExtractionPipeline {
 	 *  path, so re-importing the same file re-runs extraction against the
 	 *  same source identity (mappings dedupe by it). */
 	importNotes(input: NotesImportInput): Promise<EmissionStats>;
+	/** The cross-source pass (fork, 2026-10-27) for one existing source:
+	 *  the bridger proposes chains between it and the other sources, the
+	 *  deterministic gate filters, the merger appends. Runs automatically
+	 *  after every completed notes import when the composition root sets
+	 *  bridgeAfterImport (the server does unless LH_BRIDGES=0). */
+	bridgeSource(sourceId: string): Promise<EmissionStats>;
 }
 
 /** pi's per-step usage, flattened to the persisted CallUsage fields
@@ -999,6 +1156,85 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		);
 		console.info(`[extraction ${jobKey}] auditor done in ${Math.round(performance.now() - t0)}ms`);
 		return auditResult;
+	}
+
+	/** One bridger pass for a source (fork, 2026-10-27): under the audit
+	 *  lock (it reads the whole graph and rewrites the chain ledger), in the
+	 *  dock as its own job "<source>#bridge", usage billed to the source like
+	 *  an audit. A failed or aborted pass logs and merges nothing — a missing
+	 *  bridge never fails the import that triggered it. */
+	async function runBridge(sourceId: string, label?: string): Promise<EmissionStats> {
+		const kind = sourceId.startsWith("src_") ? "notes" : "chat";
+		const jobKey = `${sourceId}#bridge`;
+		const t0 = performance.now();
+		// Nothing of this source, or nothing else to bridge to: no model
+		// call, so no dock row and no usage record either.
+		const before = getGraph(graphStore).nodes;
+		const mine = before.filter((n) => n.provenance.some((pt) => pt.chatId === sourceId)).length;
+		if (mine === 0 || mine === before.length) return { nodes: 0, chains: 0 };
+		setPhase(jobKey, "queued", kind, label);
+		try {
+			const stats = await withAuditLock(jobKey, kind, label, async () => {
+				setPhase(jobKey, "bridging", kind, label);
+				const signal = runningExtractions.get(jobKey)?.controller.signal;
+				const graph = getGraph(graphStore);
+				const ours = graph.nodes.filter((n) => n.provenance.some((pt) => pt.chatId === sourceId));
+				if (ours.length === 0 || ours.length === graph.nodes.length) return { nodes: 0, chains: 0 }; // changed while queued
+				console.info(`[extraction ${jobKey}] bridger starting (${ours.length} of ${graph.nodes.length} nodes)`);
+				const proposals = await runBridger(
+					stageEngine("auditor", deps.auditor),
+					sourceId,
+					`THIS SOURCE: ${label ?? sourceId} (id ${sourceId}) — its ${ours.length} proposition(s):\n` +
+						ours.map((n) => `- ${n.id} :: ${n.name}\n  statement: ${n.statement.replace(/\s+/g, " ")}`).join("\n") +
+						`\n\nThe graph has ${graph.nodes.length} node(s) in all. Find the derivations that run into or out of THIS SOURCE from the other sources.`,
+					signal,
+					(usage, model, step, finishReason, tools) => {
+						recordStep(jobKey, "auditor", callUsage(usage), model);
+						console.info(`[extraction] bridger step ${step}: ${finishReason}, tools: ${tools}`);
+					},
+					auditorGraphTools({ chatStore, graphStore }),
+					new Set(graph.nodes.map((n) => n.id)),
+				);
+				const { accepted, rejected } = validateBridges(getGraph(graphStore), sourceId, proposals);
+				for (const { proposal, why } of rejected)
+					console.info(`[extraction ${jobKey}] bridge rejected (${why}): ${proposal.premises.join(" + ")} ⇒ ${proposal.conclusion}`);
+				for (const b of accepted)
+					console.info(`[extraction ${jobKey}] bridge: ${b.premises.join(" + ")} ⇒ ${b.conclusion} — ${b.reason}`);
+				setPhase(jobKey, "merging", kind, label);
+				// coverage: [] — a bridge pass covers no source text, so no
+				// checkpoint line; the chains carry the source's provenance.
+				const merged = mergeFindings(
+					sourceId,
+					{ propositions: [], chains: accepted.map(({ premises, conclusion }) => ({ premises, conclusion })) },
+					{ links: [] },
+					{ chatStore, graphStore },
+					{ foldedAt: new Date().toISOString(), coverage: [] },
+				);
+				settleGraphLayout(graphStore);
+				console.info(
+					`[extraction ${jobKey}] bridges: ${merged.chains ?? 0} merged of ${proposals.length} proposed ` +
+						`(${Math.round(performance.now() - t0)}ms)`,
+				);
+				return merged;
+			});
+			persistRunUsage(jobKey, Math.round(performance.now() - t0), stats);
+			return stats;
+		} catch (err) {
+			persistRunUsage(jobKey, Math.round(performance.now() - t0), undefined);
+			console.error(`[extraction ${jobKey}] bridger failed:`, err);
+			return { nodes: 0, chains: 0 };
+		} finally {
+			finishExtraction(jobKey);
+		}
+	}
+
+	/** The public bridge door (fork, 2026-10-27): re-run the bridger for an
+	 *  existing source, e.g. after importing a related lecture. Refuses while
+	 *  the source itself is still importing. */
+	async function bridgeSource(sourceId: string): Promise<EmissionStats> {
+		if (inFlight.has(sourceId)) throw new Error(`${sourceId} is still being extracted — bridge it afterwards.`);
+		const label = graphStore.readSources().find((s) => s.id === sourceId)?.filePath;
+		return runBridge(sourceId, label);
 	}
 
 
@@ -1429,7 +1665,11 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		try {
 			const importedAt = new Date().toISOString();
 			graphStore.upsertSource({ id, filePath: input.filePath, importedAt });
-			return await runNotesExtraction({ id, ...input, importedAt });
+			const stats = await runNotesExtraction({ id, ...input, importedAt });
+			// Fork (2026-10-27): only a COMPLETED import bridges — partial or
+			// aborted runs threw above.
+			if (deps.bridgeAfterImport) await runBridge(id, input.filePath);
+			return stats;
 		} catch (err) {
 			if (err instanceof NotesImportError || err instanceof ModelsNotConfiguredError || err instanceof ProviderKeyMissingError) throw err;
 			throw new NotesImportError("failed", { nodes: 0, chains: 0 }, err instanceof Error ? err.message : String(err), { cause: err });
@@ -1438,6 +1678,6 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		}
 	}
 
-	return { runExtraction, importNotes };
+	return { runExtraction, importNotes, bridgeSource };
 }
 
