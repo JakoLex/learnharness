@@ -519,6 +519,10 @@ export const BRIDGE_COLOR = "#c8b48c";
 const BRIDGE_ALPHA_OUT = 0.12;
 const BRIDGE_ALPHA_IN = 0.45;
 const BRIDGE_ALPHA_HOVER = 0.9;
+/** A bridge none of whose nodes is on screen draws at this share of the
+ *  normal bridge opacity (owner, 2026-10-28: long curves crossing the view
+ *  from off-screen nodes stay out of the way; hover still shows them full). */
+export const BRIDGE_DETACHED_SHARE = 0.25;
 /** How far a bridge curve bows out, as a share of its chord. */
 export const BRIDGE_BEND = 0.18;
 /** Hit-test distance for hovering a bridge, screen px. */
@@ -593,6 +597,27 @@ export function distToPolyline(p: Pt, pts: readonly Pt[]): number {
 	return best;
 }
 
+/** The world rectangle a camera shows (screen 0..w × 0..h). */
+export interface WorldView {
+	minX: number;
+	minY: number;
+	maxX: number;
+	maxY: number;
+}
+
+export function worldView(transform: { x: number; y: number; k: number }, w: number, h: number): WorldView {
+	const { x, y, k } = transform;
+	return { minX: -x / k, minY: -y / k, maxX: (w - x) / k, maxY: (h - y) / k };
+}
+
+/** Whether any of `points` (node centers) lies in `view`, widened by
+ *  `pad` (a node radius: a disc peeking in at the edge counts). */
+export function anyInView(points: readonly Pt[], view: WorldView, pad = 0): boolean {
+	return points.some(
+		(p) => p.x >= view.minX - pad && p.x <= view.maxX + pad && p.y >= view.minY - pad && p.y <= view.maxY + pad,
+	);
+}
+
 /** Bridges per pair of clusters (unordered), for the zoomed-out bundles.
  *  Each bridge counts once, under the cluster of its first foreign premise
  *  and the cluster of its conclusion; bridges whose ends share a cluster or
@@ -619,6 +644,15 @@ interface BridgeHit {
 	bridge: number;
 	curve: BridgeCurve;
 	pts: Pt[];
+}
+
+/** One bridge's drawn geometry plus the node centers that decide whether
+ *  it is in view (fork, 2026-10-28). */
+interface BridgePart {
+	shafts: Path2D;
+	shared: Path2D;
+	heads: Path2D;
+	nodes: Pt[];
 }
 
 interface BridgeBundle {
@@ -857,9 +891,7 @@ export class GraphCanvasRenderer {
 	private headsPath: Path2D = new Path2D();
 	// Fork (2026-10-27): bridge geometry — dashed curves, heads, hit-test
 	// polylines, and the zoomed-out bundles between cluster centroids.
-	private bridgeShafts: Path2D = new Path2D();
-	private sharedShafts: Path2D = new Path2D();
-	private bridgeHeads: Path2D = new Path2D();
+	private bridgeParts: BridgePart[] = [];
 	private bridgeHits: BridgeHit[] = [];
 	private bridgeBundles: BridgeBundle[] = [];
 	/** The hovered bridge (index into data.bridges) + the pointer, screen px. */
@@ -1542,14 +1574,10 @@ export class GraphCanvasRenderer {
 	 *  bundles. Part of buildGeometry, so it follows positions, visibility
 	 *  and settings exactly like the edges. */
 	private buildBridges(isVisible: (id: string) => boolean, nodeR: number, arrowLen: number): void {
-		const shafts = new Path2D();
-		const shared = new Path2D();
-		const heads = new Path2D();
+		const parts: BridgePart[] = [];
 		const hits: BridgeHit[] = [];
 		const bundles: BridgeBundle[] = [];
-		this.bridgeShafts = shafts;
-		this.sharedShafts = shared;
-		this.bridgeHeads = heads;
+		this.bridgeParts = parts;
 		this.bridgeHits = hits;
 		this.bridgeBundles = bundles;
 		const data = this.data;
@@ -1557,9 +1585,14 @@ export class GraphCanvasRenderer {
 		data.bridges.forEach((bridge, index) => {
 			const b = this.nodeById.get(bridge.to);
 			if (!b || !isVisible(bridge.to)) return;
+			const shafts = new Path2D();
+			const shared = new Path2D();
+			const heads = new Path2D();
+			const nodes: Pt[] = [{ x: b.x, y: b.y }];
 			for (const fromId of bridge.from) {
 				const a = this.nodeById.get(fromId);
 				if (!a || !isVisible(fromId)) continue;
+				nodes.push({ x: a.x, y: a.y });
 				const curve = bridgeCurve(a, b, nodeR, nodeR, arrowLen);
 				if (!curve) continue;
 				const path = bridge.kind === "shared" ? shared : shafts;
@@ -1571,6 +1604,7 @@ export class GraphCanvasRenderer {
 				heads.closePath();
 				hits.push({ bridge: index, curve, pts: sampleQuad(curve.start, curve.ctrl, curve.head.tip, BRIDGE_SAMPLES) });
 			}
+			if (nodes.length > 1) parts.push({ shafts, shared, heads, nodes });
 		});
 		// Bundles run between the centroids of the visible member propositions.
 		const clusterOfId = new Map<string, string>();
@@ -2078,15 +2112,33 @@ export class GraphCanvasRenderer {
 			}
 			ctx.strokeStyle = color;
 			ctx.fillStyle = color;
-			ctx.globalAlpha = BRIDGE_ALPHA_OUT + (BRIDGE_ALPHA_IN - BRIDGE_ALPHA_OUT) * nodeAlpha;
 			ctx.lineWidth = width / k;
-			ctx.setLineDash([6 / k, 4 / k]);
-			ctx.stroke(this.bridgeShafts);
-			ctx.setLineDash([1 / k, 4 / k]); // shared-idea links: dotted
-			ctx.lineCap = "round";
-			ctx.stroke(this.sharedShafts);
-			ctx.setLineDash([]);
-			ctx.fill(this.bridgeHeads);
+			const dashCap = ctx.lineCap; // the dashed curves keep the edges' cap
+			// In view or DETACHED (owner, 2026-10-28): a bridge none of whose
+			// nodes is on screen draws at BRIDGE_DETACHED_SHARE of the alpha.
+			const view = worldView(this.transform, w, h);
+			const groups = [
+				{ share: 1, shafts: new Path2D(), shared: new Path2D(), heads: new Path2D() },
+				{ share: BRIDGE_DETACHED_SHARE, shafts: new Path2D(), shared: new Path2D(), heads: new Path2D() },
+			];
+			for (const part of this.bridgeParts) {
+				const group = groups[anyInView(part.nodes, view, this.world.nodeR) ? 0 : 1]!;
+				group.shafts.addPath(part.shafts);
+				group.shared.addPath(part.shared);
+				group.heads.addPath(part.heads);
+			}
+			const baseAlpha = BRIDGE_ALPHA_OUT + (BRIDGE_ALPHA_IN - BRIDGE_ALPHA_OUT) * nodeAlpha;
+			for (const group of groups) {
+				ctx.globalAlpha = baseAlpha * group.share;
+				ctx.lineCap = dashCap;
+				ctx.setLineDash([6 / k, 4 / k]);
+				ctx.stroke(group.shafts);
+				ctx.setLineDash([1 / k, 4 / k]); // shared-idea links: dotted
+				ctx.lineCap = "round";
+				ctx.stroke(group.shared);
+				ctx.setLineDash([]);
+				ctx.fill(group.heads);
+			}
 			if (this.hoverBridge) {
 				ctx.globalAlpha = BRIDGE_ALPHA_HOVER;
 				ctx.lineWidth = (Math.max(width, 1) * 2) / k;

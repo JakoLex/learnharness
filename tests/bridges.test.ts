@@ -9,7 +9,7 @@ import { describe, it } from "node:test";
 import type { DerivedGraph } from "../src/core/graph.ts";
 import { validateBridges, type BridgeProposal } from "../src/agent/subagents/extraction.ts";
 import { deriveView, simplifyChains } from "../src/core/graph.ts";
-import { bridgeCurve, bundleBand, bundleBridges, distToPolyline, sampleQuad } from "../components/graph-canvas.ts";
+import { anyInView, bridgeCurve, bundleBand, bundleBridges, distToPolyline, sampleQuad, worldView } from "../components/graph-canvas.ts";
 import { BRIDGE_ANCHOR } from "../src/core/contracts.ts";
 
 // Two sources: A (functional analysis) and B (mechanics). Inside B,
@@ -168,6 +168,19 @@ describe("bridge canvas helpers", () => {
 		assert.ok(Math.abs(Math.hypot(c.start.x, c.start.y) - 1) < 1e-9);
 		assert.ok(Math.abs(Math.hypot(c.head.tip.x - 10, c.head.tip.y) - 1) < 1e-9);
 		assert.equal(bridgeCurve({ x: 1, y: 1 }, { x: 1, y: 1 }, 1, 1, 2), null);
+	});
+
+	it("maps the camera to the world rectangle it shows", () => {
+		// Pan (100, 50), zoom 2, on an 800×600 canvas.
+		assert.deepEqual(worldView({ x: 100, y: 50, k: 2 }, 800, 600), { minX: -50, minY: -25, maxX: 350, maxY: 275 });
+	});
+
+	it("a bridge is in view while ANY of its nodes is (a peeking disc counts)", () => {
+		const view = { minX: 0, minY: 0, maxX: 100, maxY: 100 };
+		assert.equal(anyInView([{ x: -500, y: 50 }, { x: 50, y: 50 }], view), true, "one end on screen");
+		assert.equal(anyInView([{ x: -500, y: 50 }, { x: 600, y: 50 }], view), false, "both ends off screen — it only crosses");
+		assert.equal(anyInView([{ x: 104, y: 50 }], view, 5), true, "within a node radius of the edge");
+		assert.equal(anyInView([{ x: 106, y: 50 }], view, 5), false);
 	});
 
 	it("measures the distance to a sampled curve", () => {
