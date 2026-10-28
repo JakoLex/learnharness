@@ -109,6 +109,8 @@ export function accumulateJobUsage(
 	total: JobUsage | undefined,
 	model: string,
 	step: UsageStepLike,
+	/** The fallback that ran this call, when one did (fallback wave). */
+	servedBy?: string,
 ): JobUsage {
 	const add = (a: number | undefined, b: number | undefined): number | undefined =>
 		a === undefined && b === undefined ? undefined : (a ?? 0) + (b ?? 0);
@@ -119,6 +121,7 @@ export function accumulateJobUsage(
 		cacheWriteTokens: step.inputTokenDetails?.cacheWriteTokens,
 		cacheWrite1hTokens: step.inputTokenDetails?.cacheWrite1hTokens,
 		reasoningTokens: step.outputTokenDetails?.reasoningTokens,
+		...(servedBy ? { model: servedBy } : {}),
 	};
 	return {
 		model,

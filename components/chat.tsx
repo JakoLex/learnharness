@@ -50,7 +50,8 @@ import { PlanMarginalia, planExists } from "@/components/plan-window";
 import { MermaidOverlay, SessionMermaidContext } from "@/components/session-overlay";
 import { AbortTurnDialog, type AbortMode } from "@/components/abort-turn-dialog";
 import { ArrowRightIcon, DumbbellIcon, WaypointsIcon } from "lucide-react";
-import type { PlanBlockData } from "@/src/core";
+import type { ModelFallbackNote, PlanBlockData } from "@/src/core";
+import { prettyModel } from "@/components/usage-format";
 import { QuestionDock } from "@/components/question-dock";
 import { SessionFind } from "@/components/session-find";
 import { SessionMessageNavigation } from "@/components/session-navigation";
@@ -1591,6 +1592,16 @@ export function Chat({
 														if (teachBoundary)
 															return <PhaseDivider key={`teach-step-${pi}`} phase="teach" />;
 														return pi > 0 ? <Separator key={pi} className="my-3" /> : null;
+													case "data-model-fallback": {
+														// A fallback answered this message (fallback wave, owner
+														// 2026-10-28): one quiet line, the primary's error on hover.
+														const note = part.data as ModelFallbackNote;
+														return (
+															<p key={pi} data-testid="model-fallback-note" title={note.reason} className="mb-2 text-xs text-muted-foreground">
+																via {prettyModel(note.to)} — {prettyModel(note.from)} unavailable
+															</p>
+														);
+													}
 													case "data-plan-block":
 														// The plan in the chat (wave 4): a frozen snapshot
 														// block — rendered as carried, never re-derived.

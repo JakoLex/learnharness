@@ -39,6 +39,7 @@ import { activeCompactionOf, type CompactionDetails } from "./compaction.ts";
 import { QUESTION_TOOLS } from "./pending.ts";
 import type { SubagentArtifactData, SubagentResultMeta } from "./contracts/jobs.ts";
 import type { PlanBlockData } from "./contracts/chat.ts";
+import { modelFallbackOf, type ModelFallbackNote } from "./model-fallback.ts";
 
 /** A view part — the loose part vocabulary the renderers consume (the same
  *  shape names the pre-Wave-D UIMessage dialect used, so the renderer
@@ -271,6 +272,20 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 				}
 			}
 			const group = lastAssistant();
+			// FALLBACK NOTE (fallback wave, owner 2026-10-28): a message a
+			// fallback answered opens with one quiet line — once per group
+			// per primary→fallback pair, so a skipped primary's multi-step
+			// turn does not repeat it on every step.
+			const fallback = modelFallbackOf(assistant);
+			if (
+				fallback &&
+				!group?.parts.some((p) => {
+					const shown = p.type === "data-model-fallback" ? (p.data as ModelFallbackNote) : undefined;
+					return shown?.from === fallback.from && shown.to === fallback.to;
+				})
+			) {
+				parts.unshift({ type: "data-model-fallback", id: `${m.id}-fb`, data: fallback });
+			}
 			if (group) {
 				// Same group: the step separator renders between the steps.
 				group.parts.push({ type: "step-start" }, ...parts);

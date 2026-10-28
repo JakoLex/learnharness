@@ -980,7 +980,9 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		// next offender, if any.
 		for (const [role, engine] of stages) {
 			const refusal = deps.providerKeyMissing?.(engine!.model.provider, ROLE_SLOT[role]);
-			if (refusal) {
+			// A fallback with its key present carries the stage (fallback wave).
+			const fallback = engine!.fallback;
+			if (refusal && !(fallback && !deps.providerKeyMissing?.(fallback.model.provider, ROLE_SLOT[role]))) {
 				console.info(`[extraction] refused — ${JSON.stringify(refusal)}`);
 				throw new ProviderKeyMissingError(refusal.provider, refusal.slots);
 			}

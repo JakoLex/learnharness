@@ -41,6 +41,8 @@ import { danglingQuestionOf, endsInDismissal, needsContinuation, newAnswerResult
 import { projectView } from "../src/core/view.ts";
 import { contextComposition, type ContextComposition } from "../src/core/context-composition.ts";
 import type { PiEngine } from "../src/agent/models.ts";
+import { clearModelOutages, withModelFallback } from "../src/agent/model-fallback.ts";
+import { modelFallbackOf } from "../src/core/model-fallback.ts";
 import type { LhMessage } from "../src/core/native-messages.ts";
 
 // Route-level pin (the chat-birth-stamp pattern): the dismiss route's
@@ -965,6 +967,37 @@ describe("canonical persistence failures", () => {
 		assert.ok(recorded.definitions > 0, "and the tool declarations");
 		assert.ok(recorded.text > 0, "the learner's message");
 		assert.equal(recorded.reasoning, 0, "this call's own reply is not part of its request");
+	});
+
+	it("a primary that fails before its first token is answered by the fallback — noted, persisted, billed to the fallback (fallback wave)", async () => {
+		const primary = createFauxCore({ provider: "faux-down", models: [{ id: "big" }] });
+		primary.setResponses([fauxAssistantMessage([], { stopReason: "error", errorMessage: "Connection error." })]);
+		const backup = createFauxCore({ provider: "faux-up", models: [{ id: "small" }] });
+		backup.setResponses([fauxAssistantMessage([fauxText("Answered by the fallback.")])]);
+		const engine: PiEngine = {
+			model: primary.getModel(),
+			streamFn: withModelFallback(
+				{ key: "faux-down:big", stream: primary.streamSimple },
+				{ key: "faux-up:small", model: backup.getModel(), stream: backup.streamSimple },
+			),
+		};
+		const chat = createConfiguredChat("Test: fallback");
+		createdChats.push(chat.id);
+		try {
+			await drainTurn(post(chat.id, { type: "text", text: "teach me the solar system" }), (opts) =>
+				createTeacherAgent(undefined, { engine, messages: opts.messages, onUsage: opts.onUsage }));
+			const record = chatStore.getChat(chat.id)!;
+			const reply = record.messages.at(-1) as LhMessage & { provider?: string; stopReason?: string };
+			assert.equal(reply.role, "assistant");
+			assert.equal(reply.provider, "faux-up", "the fallback's message is the record's");
+			assert.equal(reply.stopReason, "stop");
+			assert.deepEqual(modelFallbackOf(reply), { from: "faux-down:big", to: "faux-up:small", reason: "Connection error.", skipped: false });
+			assert.equal(record.turns!.at(-1)!.steps[0]!.model, "faux-up:small", "the call bills to the model that ran");
+			const notes = projectView(record.messages).flatMap((m) => m.parts.filter((p) => p.type === "data-model-fallback"));
+			assert.equal(notes.length, 1);
+		} finally {
+			clearModelOutages();
+		}
 	});
 
 	it("ask the tutor first: the check parks, his message follows in ONE turn, the tutor re-poses (owner, 2026-10-28)", async () => {

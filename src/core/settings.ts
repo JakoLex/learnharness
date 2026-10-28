@@ -194,6 +194,18 @@ export interface ModelSlot {
 	model?: { provider: string; id: string };
 	/** The thinking budget swap. */
 	thinkingLevel?: ThinkingLevel;
+	/** The slot's fallback (fallback wave, owner 2026-10-28): answers
+	 *  instead of the slot's model when that model fails before its first
+	 *  token. Optional; inert without a model, and never used when the
+	 *  primary or the fallback is a subscription route. */
+	fallback?: ModelSlotFallback;
+}
+
+/** A slot's fallback pin — a model plus its own optional thinking level
+ *  (unset resolves from DEFAULT_THINKING_ORDER at engine build). */
+export interface ModelSlotFallback {
+	model?: { provider: string; id: string };
+	thinkingLevel?: ThinkingLevel;
 }
 
 /** The `models` settings section (owner decision 2026-09-20: a dedicated
@@ -491,8 +503,11 @@ function sanitizeRoleOverride(raw: unknown): RoleModelOverride | undefined {
 function sanitizeModels(raw: Record<string, unknown>): ModelsSettings {
 	const out: ModelsSettings = {};
 	for (const slot of MODEL_SLOTS) {
-		const cleaned = sanitizeRoleOverride(raw[slot]);
-		if (cleaned) out[slot] = cleaned;
+		const cleaned: ModelSlot | undefined = sanitizeRoleOverride(raw[slot]);
+		if (!cleaned) continue;
+		// The fallback pin keeps only well-formed parts too (same shape rules).
+		const fallback = sanitizeRoleOverride((raw[slot] as Record<string, unknown>).fallback);
+		out[slot] = fallback ? { ...cleaned, fallback } : cleaned;
 	}
 	return out;
 }

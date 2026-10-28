@@ -19,6 +19,7 @@ import {
 	type VisualResult,
 	type VisualToolInput,
 } from "../../core/contracts.ts";
+import { usageServedBy } from "../model-fallback.ts";
 import { registerJobAbort, unregisterJobAbort } from "./aborts.ts";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -112,8 +113,9 @@ interface LoopContext {
 	/** The job's chat (debug: raw provider-event recording under
 	 * LH_PROVIDER_EVENTS=1 — forwarded into every subagent run). */
 	chatId?: string;
-	/** Fold one model call's usage into the job record (progress write). */
-	onUsage: (step: UsageStepLike) => void;
+	/** Fold one model call's usage into the job record (progress write);
+	 *  `servedBy` names the fallback when one answered the call. */
+	onUsage: (step: UsageStepLike, servedBy?: string) => void;
 }
 
 /** The kind→role table (model slots wave, 2026-09-20): which ModelRole's
@@ -145,8 +147,8 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 		return {
 			abortSignal: controller.signal,
 			chatId,
-			onUsage: (step) => {
-				const next = accumulateJobUsage(usageTotals.get(jobId), model, step);
+			onUsage: (step, servedBy) => {
+				const next = accumulateJobUsage(usageTotals.get(jobId), model, step, servedBy);
 				usageTotals.set(jobId, next);
 				jobStore.updateJob(jobId, { usage: next }); // merge patch — status untouched
 			},
@@ -251,9 +253,12 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 		// key may be gone — refuse the spawn BEFORE the loop, same
 		// convention (the injected check reads the key store; absent in
 		// engine-injecting tests).
-		const keyRefusal =
-			deps.providerKeyMissing?.(engine.model.provider, ROLE_SLOT[KIND_ROLE[job.kind]]) ?? null;
-		if (keyRefusal) {
+		const tier = ROLE_SLOT[KIND_ROLE[job.kind]];
+		const keyRefusal = deps.providerKeyMissing?.(engine.model.provider, tier) ?? null;
+		// A fallback whose key IS present still runs the job (fallback wave,
+		// owner 2026-10-28): the primary fails over at its first call.
+		const fallbackReady = engine.fallback !== undefined && !deps.providerKeyMissing?.(engine.fallback.model.provider, tier);
+		if (keyRefusal && !fallbackReady) {
 			console.info(`[job ${jobId}] refused — ${JSON.stringify(keyRefusal)}`);
 			await refuse(keyRefusal.error);
 			return;
@@ -378,7 +383,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 				chatId: loop.chatId,
 				// Money channel: each agent step is one model call — fold its
 				// usage into the record as it completes (progress write).
-				onUsage: (usage) => loop.onUsage(piUsageToStep(usage)),
+				onUsage: (usage) => loop.onUsage(piUsageToStep(usage), usageServedBy(usage)),
 					onToolStart: (toolName, args) => {
 					const input = args as { query?: string; url?: string } | undefined;
 					if (typeof input?.url === "string" && (toolName === "web_fetch" || toolName === "web_fetch_pdf")) {
@@ -427,7 +432,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 					engine: model,
 					abortSignal: loop.abortSignal,
 					chatId: loop.chatId,
-					onUsage: (usage) => loop.onUsage(piUsageToStep(usage)),
+					onUsage: (usage) => loop.onUsage(piUsageToStep(usage), usageServedBy(usage)),
 					onActivity: (line) => jobStore.updateJob(jobId, { activity: line }),
 				},
 			);
@@ -463,7 +468,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 					engine: model,
 					abortSignal: loop.abortSignal,
 					chatId: loop.chatId,
-					onUsage: (usage) => loop.onUsage(piUsageToStep(usage)),
+					onUsage: (usage) => loop.onUsage(piUsageToStep(usage), usageServedBy(usage)),
 					onActivity: (line) => jobStore.updateJob(jobId, { activity: line }),
 				},
 			);
@@ -502,7 +507,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 				engine: model,
 				abortSignal: loop.abortSignal,
 				chatId: loop.chatId,
-				onUsage: (usage) => loop.onUsage(piUsageToStep(usage)),
+				onUsage: (usage) => loop.onUsage(piUsageToStep(usage), usageServedBy(usage)),
 				onActivity: (line) => jobStore.updateJob(jobId, { activity: line }),
 			},
 			);

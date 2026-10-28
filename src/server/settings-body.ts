@@ -21,6 +21,7 @@ import type {
 	GeneralSettings,
 	DictationSettings,
 	GraphSettings,
+	ModelSlot,
 	ModelsSettings,
 	RoleModelOverride,
 } from "../core/settings.ts";
@@ -344,7 +345,19 @@ export function parseModelsSettingsBody(body: unknown): SettingsBodyResult<Model
 		if (!parsed.override.model) {
 			return { ok: false, error: `slot "${key}" must set a model (thinkingLevel alone cannot run — absent slot = unset)` };
 		}
-		settings[key as (typeof MODEL_SLOTS)[number]] = parsed.override;
+		const slot: ModelSlot = parsed.override;
+		// The slot's fallback (fallback wave, owner 2026-10-28): same shape
+		// and same rule — present means a model; absent clears it.
+		const fallbackRaw = (raw[key] as Record<string, unknown>).fallback;
+		if (fallbackRaw !== undefined) {
+			const fallback = parseRoleOverride(fallbackRaw, `${key}.fallback`);
+			if (!fallback.ok) return { ok: false, error: fallback.error };
+			if (!fallback.override.model) {
+				return { ok: false, error: `slot "${key}" fallback must set a model (absent fallback = none)` };
+			}
+			slot.fallback = fallback.override;
+		}
+		settings[key as (typeof MODEL_SLOTS)[number]] = slot;
 	}
 	return { ok: true, settings };
 }

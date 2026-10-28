@@ -1,11 +1,11 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIcon, BotIcon, FileTextIcon, PenToolIcon, PlayIcon, SearchIcon, SquareIcon, WaypointsIcon } from "lucide-react";
+import { ActivityIcon, BotIcon, FileTextIcon, PenToolIcon, PlayIcon, SearchIcon, SquareIcon, TriangleAlertIcon, WaypointsIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { CallUsage, JobKind, JobRecord } from "@/src/core";
+import type { CallUsage, JobKind, JobRecord, ModelOutage } from "@/src/core";
 import { isModelsRefusal, isProviderKeyRefusal, subscriptionLabel, subscriptionLabels } from "@/src/core";
-import { formatTokens, planCostLabel } from "@/components/usage-format";
+import { formatTokens, planCostLabel, prettyModel } from "@/components/usage-format";
 import { useServerEvent, useServerResync } from "@/components/server-events";
 
 /**
@@ -70,6 +70,9 @@ export interface FeedExtraction {
 export interface ActivityFeed {
 	jobs: FeedJob[];
 	extractions: FeedExtraction[];
+	/** Primaries marked down — their calls go to the fallback until
+	 *  `until` (fallback wave, owner 2026-10-28). */
+	outages?: ModelOutage[];
 }
 
 const EMPTY_FEED: ActivityFeed = { jobs: [], extractions: [] };
@@ -109,7 +112,7 @@ export function ActivityProvider({ children }: { children: React.ReactNode }) {
 				if (res.ok) {
 					const data = (await res.json()) as Partial<ActivityFeed>;
 					if (alive)
-						setFeed({ jobs: data.jobs ?? [], extractions: data.extractions ?? [] });
+						setFeed({ jobs: data.jobs ?? [], extractions: data.extractions ?? [], outages: data.outages ?? [] });
 				}
 			} catch {
 				// transport blip: keep the last feed, announce again next event
@@ -256,6 +259,11 @@ export function toBlobs(feed: ActivityFeed): ActivityBlob[] {
 	return blobs;
 }
 
+/** A wall-clock time as HH:MM in the viewer's locale. */
+export function formatClock(ms: number): string {
+	return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 /** Elapsed as a compact ticking string: 45s / 3m 04s / 1h 12m. */
 export function formatElapsed(ms: number): string {
 	const s = Math.max(0, Math.floor(ms / 1000));
@@ -354,6 +362,25 @@ export function ActivitySection({ feed: feedProp }: { feed?: ActivityFeed }) {
 				</span>
 				)}
 			</div>
+			{(feed.outages?.length ?? 0) > 0 && (
+				// Not a process — a status: no elapsed, no abort. The row leaves
+				// when the down-mark expires (the server re-announces then).
+				<ul data-testid="activity-outages" className="mb-1 flex flex-col gap-0.5">
+					{feed.outages!.map((outage) => (
+						<li
+							key={outage.model}
+							data-testid="activity-outage"
+							title={outage.reason}
+							className="flex items-center gap-2 rounded-lg px-2 py-1 text-xs text-amber-500"
+						>
+							<TriangleAlertIcon className="size-3.5 shrink-0" />
+							<span className="min-w-0 flex-1 truncate">
+								{prettyModel(outage.model)} unavailable — fallback until {formatClock(outage.until)}
+							</span>
+						</li>
+					))}
+				</ul>
+			)}
 			{blobs.length > 0 && (
 				<div className="flex max-h-[40dvh] flex-col gap-1 overflow-y-auto">
 					{blobs.map((blob) => (

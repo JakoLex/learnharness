@@ -51,7 +51,8 @@
  * missing (the toggle painted its old state until a remount re-fetched).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { XIcon } from "lucide-react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { MenuShell } from "@/components/menu-shell";
 import { useSettingsSaved } from "@/components/settings-signal";
 import { defaultOrderLevel, populateLevel } from "@/components/thinking-default";
@@ -65,6 +66,8 @@ import {
 	type AgentSettings,
 	type CompactionSettings,
 	type GraphSettings,
+	subscriptionLabel,
+	type ModelCatalogEntry,
 	type ModelSlotName,
 	type ModelsSettings,
 } from "@/src/core";
@@ -145,7 +148,31 @@ export function composeSlotModel(
 	next[slot] = {
 		...(provider && id ? { model: { provider, id } } : prev?.model ? { model: prev.model } : {}),
 		...(thinking ? { thinkingLevel: thinking as ThinkingLevel } : {}),
+		// The slot's fallback rides every slot edit unchanged.
+		...(prev?.fallback ? { fallback: prev.fallback } : {}),
 	};
+	return next;
+}
+
+/** Compose: one slot's FALLBACK (fallback wave, owner 2026-10-28). Empty
+ *  model = no fallback; the thinking level rides the fallback model only.
+ *  A slot without a model carries no fallback (it could not be saved).
+ *  Pure — exported for tests. */
+export function composeSlotFallback(
+	models: ModelsSettings | undefined,
+	slot: ModelSlotName,
+	provider: string,
+	id: string,
+	thinking: string,
+): ModelsSettings {
+	const prev = models?.[slot];
+	const next = { ...models };
+	if (!prev?.model) return next;
+	const { fallback: _previous, ...rest } = prev;
+	next[slot] =
+		provider && id
+			? { ...rest, fallback: { model: { provider, id }, ...(thinking ? { thinkingLevel: thinking as ThinkingLevel } : {}) } }
+			: rest;
 	return next;
 }
 
@@ -213,6 +240,115 @@ export function composePromptSwitch(agent: AgentSettings | undefined, path: stri
 	if (on) prompts[path] = true;
 	else delete prompts[path];
 	return { ...agent, prompts };
+}
+
+/** One slot's FALLBACK row (fallback wave, owner 2026-10-28): the model
+ *  that answers when the slot's model fails before responding. Ordinary
+ *  API/local models only — a subscription is never a fallback — with the
+ *  slot's own catalog filter (vision keeps image input). "None" until
+ *  picked; the clear button removes it; the thinking trigger appears
+ *  once a model is picked (a level alone cannot run). */
+function SlotFallbackRow({
+	slot,
+	models,
+	catalog,
+	openKind,
+	anchorRef,
+	onOpen,
+	onModelsChange,
+}: {
+	slot: ModelSlotName;
+	models: ModelsSettings | undefined;
+	catalog: ModelCatalogEntry[] | undefined;
+	openKind: "model" | "thinking" | "engine" | null;
+	anchorRef: React.RefObject<HTMLSpanElement | null>;
+	onOpen: (kind: "model" | "thinking" | null) => void;
+	onModelsChange: (next: ModelsSettings) => void;
+}) {
+	const fallback = models?.[slot]?.fallback;
+	const modelId = fallback?.model?.id ?? "";
+	const provider = fallback?.model?.provider ?? "";
+	const thinking = fallback?.thinkingLevel ?? "";
+	const choices = catalog?.filter((m) => !subscriptionLabel(`${m.provider}:${m.id}`));
+	const chosen = modelId ? catalog?.find((m) => m.id === modelId && m.provider === provider) : undefined;
+	const levels = chosen ? chosen.supportedLevels : THINKING_LEVELS;
+	const label = `${SLOT_META[slot].label} fallback`;
+	return (
+		<SettingsRow label={label} hint="Answers when the model above fails before responding" testid={`slot-fallback-row-${slot}`}>
+			<span ref={openKind ? anchorRef : undefined} className="relative flex items-center gap-2">
+				<MenuTrigger
+					value={modelId ? prettyModel(modelId) : ""}
+					hint={modelId ? `${provider}:${modelId}` : undefined}
+					emptyLabel="None"
+					ariaLabel={`${label} model`}
+					testid={`slot-fallback-model-${slot}`}
+					open={openKind === "model"}
+					onClick={() => onOpen(openKind === "model" ? null : "model")}
+					widthClass="min-w-20"
+				/>
+				{modelId && (
+					<MenuTrigger
+						value={thinking || (chosen ? defaultOrderLevel(levels) : "")}
+						emptyLabel="—"
+						ariaLabel={`${label} thinking`}
+						testid={`slot-fallback-thinking-${slot}`}
+						open={openKind === "thinking"}
+						onClick={() => onOpen(openKind === "thinking" ? null : "thinking")}
+						widthClass="w-20"
+					/>
+				)}
+				{modelId && (
+					<button
+						type="button"
+						aria-label={`Remove ${label.toLowerCase()}`}
+						title="Remove fallback"
+						data-testid={`slot-fallback-clear-${slot}`}
+						onClick={() => onModelsChange(composeSlotFallback(models, slot, "", "", ""))}
+						className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-card-foreground"
+					>
+						<XIcon className="size-3.5" />
+					</button>
+				)}
+				{openKind === "model" && (
+					<MenuShell
+						preferredSide="down"
+						anchorTestid={`slot-fallback-model-${slot}`}
+						testid={`slot-fallback-model-menu-${slot}`}
+						menuClass="flex w-[22rem] flex-col rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
+					>
+						<ModelMenuList
+							models={choices}
+							effectiveId={modelId}
+							effectiveProvider={provider}
+							onPick={(entry) => {
+								const next = populateLevel(thinking || undefined, entry.supportedLevels);
+								onModelsChange(composeSlotFallback(models, slot, entry.provider, entry.id, next));
+								onOpen(null);
+							}}
+							footer="Used only when the slot's model fails"
+						/>
+					</MenuShell>
+				)}
+				{openKind === "thinking" && (
+					<MenuShell
+						preferredSide="down"
+						anchorTestid={`slot-fallback-thinking-${slot}`}
+						testid={`slot-fallback-thinking-menu-${slot}`}
+						menuClass="flex w-44 flex-col gap-0.5 rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
+					>
+						<ThinkingMenuList
+							levels={levels.map(String)}
+							effectiveLevel={thinking || (chosen ? defaultOrderLevel(levels) : undefined)}
+							onPick={(level) => {
+								onModelsChange(composeSlotFallback(models, slot, provider, modelId, level));
+								onOpen(null);
+							}}
+						/>
+					</MenuShell>
+				)}
+			</span>
+		</SettingsRow>
+	);
 }
 
 /** The collapsed select look (owner: "the look of the collapsed menu is
@@ -306,7 +442,7 @@ export function AgentSection({
 	const [segmentStatus, setSegmentStatus] = useState<string | null>(null);
 	/** One open dropdown for the whole section: which slot (or the search
 	 *  row), which kind. */
-	const [openMenu, setOpenMenu] = useState<{ target: ModelSlotName | "search"; kind: "model" | "thinking" | "engine" } | null>(null);
+	const [openMenu, setOpenMenu] = useState<{ target: ModelSlotName | `${ModelSlotName}-fallback` | "search"; kind: "model" | "thinking" | "engine" } | null>(null);
 	const menuAnchorRef = useRef<HTMLSpanElement>(null);
 
 	const refreshSearch = () =>
@@ -604,8 +740,8 @@ export function AgentSection({
 					const slotCatalog =
 						slot === "vision" ? catalog?.filter((m) => m.input.includes("image")) : catalog;
 					return (
+						<Fragment key={slot}>
 						<SettingsRow
-							key={slot}
 							label={SLOT_META[slot].label}
 							hint={SLOT_META[slot].roster}
 							testid={`slot-row-${slot}`}
@@ -687,6 +823,18 @@ export function AgentSection({
 								)}
 							</span>
 						</SettingsRow>
+						{override?.model && (
+							<SlotFallbackRow
+								slot={slot}
+								models={models}
+								catalog={slotCatalog ?? undefined}
+								openKind={openMenu?.target === `${slot}-fallback` ? openMenu.kind : null}
+								anchorRef={menuAnchorRef}
+								onOpen={(kind) => setOpenMenu(kind ? { target: `${slot}-fallback`, kind } : null)}
+								onModelsChange={onModelsChange}
+							/>
+						)}
+						</Fragment>
 					);
 				})}
 			</SettingsGroup>

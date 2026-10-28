@@ -45,7 +45,7 @@ export function turnCost(turn: Pick<TurnUsage, "model" | "steps">, price: CallPr
 	if (isSubscriptionModel(turn.model) || turn.steps.length === 0) return null;
 	let total = 0;
 	for (const step of turn.steps) {
-		const cost = price(step, turn.model);
+		const cost = price(step, step.model ?? turn.model);
 		if (cost === null) return null;
 		total += cost;
 	}

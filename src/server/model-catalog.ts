@@ -23,6 +23,7 @@ import { piModels } from "../agent/models.ts";
 import { chatGPTConnected, chatGPTModel, chatGPTModels, refreshChatGPTModels } from "../agent/chatgpt-bridge.ts";
 import { NATIVE_SUBSCRIPTIONS } from "../core/contracts/subscriptions.ts";
 import { nativeSubscriptionId, nativeSubscriptionConnected, nativeSubscriptionModel, nativeSubscriptionModels, refreshSubscriptionModels } from "../agent/subscription-bridge.ts";
+import { isSubscriptionProvider } from "../agent/subscription-connections.ts";
 
 export async function refreshConnectionCatalog(provider?: string): Promise<void> {
 	await Promise.all([
@@ -48,7 +49,7 @@ import type {
 } from "../core/contracts/models.ts";
 import type { EffectiveModelSpec, EffectiveSlot } from "../core/settings-resolution.ts";
 import { AUTH_PROVIDER_KEYS } from "../core/auth-keys.ts";
-import { BACKGROUND_MODEL_ROLES, MODEL_SLOTS, type BackgroundModelRole, type ModelSlotName, type ModelsSettings } from "../core/settings.ts";
+import { BACKGROUND_MODEL_ROLES, MODEL_SLOTS, type BackgroundModelRole, type ModelSlot, type ModelSlotName, type ModelsSettings } from "../core/settings.ts";
 
 /** The picker's client-safe model entry (contract: core/contracts/models.ts). */
 export type ModelDto = ModelCatalogEntry;
@@ -255,9 +256,24 @@ export function validateModelsSettings(settings: ModelsSettings, stored?: Models
 		const slot = settings[name];
 		if (!slot) continue;
 		const previous = stored?.[name]?.model;
-		if (slot.model && previous && slot.model.provider === previous.provider && slot.model.id === previous.id) continue;
-		const verdict = validateSlotSpec(name, slot);
-		if (!verdict.ok) return verdict;
+		const unchanged = slot.model && previous && slot.model.provider === previous.provider && slot.model.id === previous.id;
+		if (!unchanged) {
+			const verdict = validateSlotSpec(name, slot);
+			if (!verdict.ok) return verdict;
+		}
+		// The fallback (fallback wave, owner 2026-10-28): same catalog gate
+		// for a new/replaced pin; subscription routes are never a fallback.
+		const fallback = slot.fallback?.model;
+		if (fallback) {
+			if (isSubscriptionProvider(fallback.provider)) {
+				return { ok: false, error: `A subscription model cannot be a fallback (${name})` };
+			}
+			const before = stored?.[name]?.fallback?.model;
+			if (!(before && before.provider === fallback.provider && before.id === fallback.id)) {
+				const verdict = validateSlotSpec(name, { model: fallback });
+				if (!verdict.ok) return verdict;
+			}
+		}
 	}
 	return { ok: true };
 }
@@ -303,13 +319,25 @@ export function clampModelsLevels(settings: ModelsSettings): ModelsSettings {
 	for (const name of MODEL_SLOTS) {
 		const slot = settings[name];
 		if (!slot?.model) continue;
-		out[name] =
+		const clamped: ModelSlot =
 			slot.thinkingLevel !== undefined
 				? {
 						model: slot.model,
 						thinkingLevel: clampLevelFor(slot.model.provider, slot.model.id, slot.thinkingLevel),
 					}
-				: slot;
+				: { model: slot.model };
+		// The fallback's level clamps against the FALLBACK's own model.
+		const fallback = slot.fallback;
+		if (fallback?.model) {
+			clamped.fallback =
+				fallback.thinkingLevel !== undefined
+					? {
+							model: fallback.model,
+							thinkingLevel: clampLevelFor(fallback.model.provider, fallback.model.id, fallback.thinkingLevel),
+						}
+					: { model: fallback.model };
+		}
+		out[name] = clamped;
 	}
 	return out;
 }

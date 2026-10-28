@@ -26,6 +26,8 @@ import { catalogContextLimits } from "./model-catalog.ts";
 import { listJobs } from "./jobs.ts";
 import { jobCost } from "./pricing.ts";
 import type { JobRecord } from "../core/contracts.ts";
+import type { ModelOutage } from "../core/model-fallback.ts";
+import { modelOutages } from "../agent/model-fallback.ts";
 
 export { abortExtraction, extractionStatuses, type ExtractionPhase, type RunningExtraction } from "../agent/subagents/extraction.ts";
 export { chatStore } from "../store/chats.ts";
@@ -69,6 +71,9 @@ export interface ActivityExtraction {
 export function activityFeed(): {
 	jobs: ActivityJob[];
 	extractions: ActivityExtraction[];
+	/** Primaries currently marked down — calls go to their fallback
+	 *  (fallback wave, owner 2026-10-28). */
+	outages: ModelOutage[];
 	graphRevision: number;
 } {
 	const chats = chatStore.listChats();
@@ -104,6 +109,7 @@ export function activityFeed(): {
 	return {
 		jobs,
 		extractions: extractions.sort((a, b) => a.startedAt - b.startedAt),
+		outages: modelOutages(),
 		graphRevision: graphRevision(),
 	};
 }

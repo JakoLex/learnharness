@@ -39,6 +39,7 @@ import {
 	type CompactionSettings,
 	type GraphSettings,
 	type ModelSlot,
+	type ModelSlotFallback,
 	type ModelSlotName,
 	type RoleModelOverride,
 	type UserSettings,
@@ -53,6 +54,9 @@ export interface EffectiveSlot {
 	provider: string;
 	id: string;
 	thinkingLevel?: ThinkingLevel;
+	/** The slot's resolved fallback (fallback wave, owner 2026-10-28);
+	 *  absent when unset or when it names the slot's own model. */
+	fallback?: EffectiveModelSpec;
 }
 
 /** A fully-resolved model pin for one role — same shape/level semantics
@@ -62,6 +66,10 @@ export interface EffectiveModelSpec {
 	provider: string;
 	id: string;
 	thinkingLevel?: ThinkingLevel;
+	/** The fallback that answers when this model fails before its first
+	 *  token — the tier slot's fallback (fallback wave, owner 2026-10-28).
+	 *  Never nested: a fallback carries no fallback of its own. */
+	fallback?: EffectiveModelSpec;
 }
 
 /** The concrete appearance view — same shape as the factory's. */
@@ -108,11 +116,34 @@ export function resolveConversationSpec(
 ): EffectiveModelSpec | null {
 	const model = chat?.model ?? (strong ? { provider: strong.provider, id: strong.id } : undefined);
 	if (!model) return null;
+	const fallback = distinctFallback(strong?.fallback, model);
 	return {
 		provider: model.provider,
 		id: model.id,
 		thinkingLevel: chat?.thinkingLevel ?? strong?.thinkingLevel,
+		...(fallback ? { fallback } : {}),
 	};
+}
+
+/** A stored fallback pin → its spec (absent without a model). */
+function slotFallback(fallback: ModelSlotFallback | undefined): EffectiveModelSpec | undefined {
+	if (!fallback?.model) return undefined;
+	return {
+		provider: fallback.model.provider,
+		id: fallback.model.id,
+		...(fallback.thinkingLevel ? { thinkingLevel: fallback.thinkingLevel } : {}),
+	};
+}
+
+/** A fallback checked against the model it backs up: absent when it names
+ *  that very model (a fallback onto itself would just repeat the failed
+ *  request). */
+function distinctFallback(
+	fallback: EffectiveModelSpec | undefined,
+	primary: { provider: string; id: string },
+): EffectiveModelSpec | undefined {
+	if (!fallback) return undefined;
+	return fallback.provider === primary.provider && fallback.id === primary.id ? undefined : fallback;
 }
 
 /** Full-chain resolution for ANY role (BYOK, owner 2026-09-22):
@@ -133,7 +164,13 @@ export function resolveRoleSpec(role: ModelRole, record: UserSettings | null): E
  *  to ride without the factory floor). */
 export function resolveSlot(slot: ModelSlot | undefined): EffectiveSlot | null {
 	if (!slot?.model) return null;
-	return { provider: slot.model.provider, id: slot.model.id, thinkingLevel: slot.thinkingLevel };
+	const fallback = distinctFallback(slotFallback(slot.fallback), slot.model);
+	return {
+		provider: slot.model.provider,
+		id: slot.model.id,
+		thinkingLevel: slot.thinkingLevel,
+		...(fallback ? { fallback } : {}),
+	};
 }
 
 /** Resolve one role's spec — the BYOK chain (owner 2026-09-22): role
@@ -151,10 +188,14 @@ export function resolveModelSpec(
 	const slot = slotName ? slots?.[slotName] : undefined;
 	const model = override?.model ?? slot?.model;
 	if (!model) return undefined;
+	// The tier's fallback backs up whatever model the role resolved to —
+	// a role override included (fallback wave, owner 2026-10-28).
+	const fallback = distinctFallback(slotFallback(slot?.fallback), model);
 	return {
 		provider: model.provider,
 		id: model.id,
 		thinkingLevel: override?.thinkingLevel ?? slot?.thinkingLevel,
+		...(fallback ? { fallback } : {}),
 	};
 }
 

@@ -94,7 +94,8 @@ export function contextView({
 		total: contextTokens,
 		limit,
 		usage: contextTokens !== null && limit ? (contextTokens / limit) * 100 : null,
-		model: lastTurn?.model ?? null,
+		// The model that ran the last call — a fallback when one answered.
+		model: lastCall?.model ?? lastTurn?.model ?? null,
 		composition: recorded ?? transcriptComposition(messages),
 		recorded: recorded !== undefined,
 		lastCall,
@@ -357,10 +358,14 @@ export function ContextDialogBody({
 					<ul className="flex max-h-56 flex-col gap-1 overflow-y-auto text-xs">
 						{turns.map((turn, i) => {
 							const c = pricing?.turnCosts[turn.id] ?? null;
+							const fallbacks = [...new Set(turn.steps.flatMap((step) => (step.model ? [step.model] : [])))];
 							return (
 								<li key={`${turn.messageId}-${i}`} className="flex items-center justify-between gap-2">
 									<span className="truncate text-muted-foreground">
 										#{i + 1} · {prettyModel(turn.model, true)}
+										{fallbacks.length > 0 && (
+											<span data-testid="turn-fallback"> → fallback {fallbacks.map((m) => prettyModel(m, true)).join(", ")}</span>
+										)}
 									</span>
 									<span className="flex shrink-0 items-center gap-2 tabular-nums">
 										<span className="text-muted-foreground">{turn.steps.length} steps</span>

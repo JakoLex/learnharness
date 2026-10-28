@@ -7,6 +7,7 @@ import {
 	type TeachingAgent,
 } from "../agent/teacher-agent.ts";
 import { piEngineForSpec, type PiEngine } from "../agent/models.ts";
+import { usageServedBy } from "../agent/model-fallback.ts";
 import { connectionBackgroundAllowed, connectionScopeCurrent, isSubscriptionProvider } from "../agent/subscription-connections.ts";
 import { nativeSubscriptionError } from "../agent/subscription-stream.ts";
 import { chatGPTStreamError } from "../agent/chatgpt-stream.ts";
@@ -233,7 +234,13 @@ export async function handleChatInput(
 			return Response.json({ error: "Background use is off for this connection. Automatic follow-up remains deferred in its queue." }, { status: 403 });
 		}
 	}
-	if (!providerKeyPresent(conversation.provider)) {
+	// A usable fallback whose key IS present carries the turn (fallback wave,
+	// owner 2026-10-28): the primary fails over at its first call.
+	const fallbackKeyed =
+		!!conversation.fallback &&
+		!isSubscriptionProvider(conversation.provider) &&
+		providerKeyPresent(conversation.fallback.provider);
+	if (!providerKeyPresent(conversation.provider) && !fallbackKeyed) {
 		const envelope = providerKeyMissingEnvelope(conversation.provider, ["strong"]);
 		console.info(`[chat ${chatId}] turn refused — ${JSON.stringify(envelope)}`);
 		return Response.json(envelope, { status: 503 });
@@ -378,6 +385,8 @@ export async function handleChatInput(
 	// (aborted, refused usage) never claims — the next request overwrites.
 	let callContext: ContextComposition | undefined;
 	const collectUsage = (usage: Usage) => {
+		// A fallback-served call bills to the fallback (fallback wave).
+		const servedBy = usageServedBy(usage);
 		steps.push({
 			inputTokens: usage.input,
 			outputTokens: usage.output,
@@ -387,6 +396,7 @@ export async function handleChatInput(
 			// Optional in pi's Usage — persisted as 0, never dropped.
 			reasoningTokens: usage.reasoning ?? 0,
 			...(callContext ? { context: callContext } : {}),
+			...(servedBy ? { model: servedBy } : {}),
 		});
 		callContext = undefined;
 	};

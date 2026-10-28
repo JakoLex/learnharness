@@ -136,6 +136,10 @@ export interface CallUsage {
 	 *  assembled request (context panel, 2026-10-28). Conversation agents
 	 *  only; absent on calls recorded before it existed. */
 	context?: ContextComposition;
+	/** The model that actually ran this call ("provider:id") when it was
+	 *  NOT the turn's/job's model — a fallback answered (fallback wave,
+	 *  owner 2026-10-28). Absent = the enclosing record's model. */
+	model?: string;
 }
 
 /** One billing turn: one full invocation of the teacher (a client turn or a

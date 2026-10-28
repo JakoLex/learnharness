@@ -18,6 +18,7 @@ import { chatGPTStream } from "./chatgpt-stream.ts";
 import type { ChatGPTDispatchLifecycle } from "./chatgpt-request-cycle.ts";
 import { nativeSubscriptionId, nativeSubscriptionModel } from "./subscription-bridge.ts";
 import { nativeSubscriptionStream } from "./subscription-stream.ts";
+import { withModelFallback } from "./model-fallback.ts";
 
 /** App identity is immutable and shared by Models and every native Agent.
  * Agent's default Pi attribution otherwise overrides the Models identity. */
@@ -45,6 +46,9 @@ export interface PiEngine {
 	/** The resolved (config-or-settings, CLAMPED) thinking level —
 	 *  observability + tests; the streamFn pins it anyway. */
 	level?: ThinkingLevel;
+	/** The fallback the streamFn falls back to (fallback wave, owner
+	 *  2026-10-28) — absent when none is configured or usable. */
+	fallback?: { model: Model<Api>; level: ThinkingLevel };
 }
 
 export type { ThinkingLevel };
@@ -84,6 +88,8 @@ export interface ResolvedModelSpec {
 	provider: string;
 	id: string;
 	thinkingLevel?: ThinkingLevel;
+	/** The slot's fallback (fallback wave, owner 2026-10-28). */
+	fallback?: ResolvedModelSpec;
 }
 
 /** The first entry of the baked default order the model supports (owner,
@@ -109,24 +115,55 @@ export function piEngineForSpec(spec: ResolvedModelSpec, background: boolean | (
 	if (!model) {
 		throw new Error(`${spec.provider} catalog has no model ${spec.id}`);
 	}
-	// UNSET level → the baked default order (first entry the model
-	// supports); SET level → pi's native nearest-clamp (model swaps keep
-	// the user's intent and adapt honestly).
-	const level = spec.thinkingLevel
-		? clampThinkingLevel(model, spec.thinkingLevel)
-		: defaultThinkingLevel(model);
+	const level = resolvedLevel(model, spec.thinkingLevel);
+	// bound streamSimple: the agent loop forwards state.thinkingLevel as
+	// `reasoning` (undefined = off on pi-ai's scale); the clamp above keeps
+	// the pin honest even when config or settings drift off the map.
+	const primary: StreamFunction = (requestModel, context, options) => {
+		const purpose = typeof background === "function" ? background : () => background;
+		const stream = spec.provider === "chatgpt" ? chatGPTStream(purpose, lifecycle) : nativeId ? nativeSubscriptionStream(models.getProvider(nativeId)!, purpose, lifecycle) : models.streamSimple.bind(models);
+		return stream(requestModel, context, { ...options, reasoning: level === "off" ? undefined : level });
+	};
+	// THE FALLBACK (fallback wave, owner 2026-10-28): ordinary API/local
+	// routes only — a subscription primary keeps the upstream no-fallback
+	// rule and a subscription is never a fallback. An unusable fallback pin
+	// (gone from the catalog) leaves the primary alone instead of failing it.
+	const fallbackSpec = spec.fallback;
+	const fallbackModel =
+		fallbackSpec && !subscriptionRoute(spec.provider) && !subscriptionRoute(fallbackSpec.provider)
+			? models.getModel(fallbackSpec.provider, fallbackSpec.id)
+			: undefined;
+	if (fallbackSpec && !fallbackModel && !subscriptionRoute(spec.provider)) {
+		console.warn(`[models] fallback ${fallbackSpec.provider}:${fallbackSpec.id} unavailable — ${spec.provider}:${spec.id} runs without one`);
+	}
+	if (!fallbackModel) return { model, level, streamFn: primary };
+	const fallbackLevel = resolvedLevel(fallbackModel, fallbackSpec!.thinkingLevel);
 	return {
 		model,
 		level,
-		// bound streamSimple: the agent loop forwards state.thinkingLevel as
-		// `reasoning` (undefined = off on pi-ai's scale); the clamp above keeps
-		// the pin honest even when config or settings drift off the map.
-		streamFn: (requestModel, context, options) => {
-			const purpose = typeof background === "function" ? background : () => background;
-			const stream = spec.provider === "chatgpt" ? chatGPTStream(purpose, lifecycle) : nativeId ? nativeSubscriptionStream(models.getProvider(nativeId)!, purpose, lifecycle) : models.streamSimple.bind(models);
-			return stream(requestModel, context, { ...options, reasoning: level === "off" ? undefined : level });
-		},
+		fallback: { model: fallbackModel, level: fallbackLevel },
+		streamFn: withModelFallback(
+			{ key: `${model.provider}:${model.id}`, stream: primary },
+			{
+				key: `${fallbackModel.provider}:${fallbackModel.id}`,
+				model: fallbackModel,
+				stream: (requestModel, context, options) =>
+					models.streamSimple(requestModel, context, { ...options, reasoning: fallbackLevel === "off" ? undefined : fallbackLevel }),
+			},
+		),
 	};
+}
+
+/** UNSET level → the baked default order (first entry the model supports);
+ *  SET level → pi's native nearest-clamp (model swaps keep the user's
+ *  intent and adapt honestly). */
+function resolvedLevel(model: Model<Api>, level: ThinkingLevel | undefined): ThinkingLevel {
+	return level ? clampThinkingLevel(model, level) : defaultThinkingLevel(model);
+}
+
+/** chatgpt + the native subscription routes (never part of a fallback). */
+function subscriptionRoute(provider: string): boolean {
+	return provider === "chatgpt" || !!nativeSubscriptionId(provider);
 }
 
 /** The LEGACY role entry point — BYOK made it an honest THROWER (owner,
