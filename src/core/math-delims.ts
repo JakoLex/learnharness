@@ -114,8 +114,72 @@ export function healOverescapedCommands(text: string): string {
 	return text.includes("\\\\") ? mapMathContent(text, recoverCommandRuns) : text;
 }
 
+/** Frame a display-math block whose fence is glued to the formula
+ * (presentation-only, 2026-10-28): `$$` on its own line with the closing
+ * `$$` written at the end of the last formula line is no Markdown math
+ * fence, so the dollars reached KaTeX as TeX and the whole block rendered
+ * as a parse error; an opener written on the first formula line turns
+ * that line into the fence's (dropped) meta. Same framing
+ * recoverDocumentLayout applies after decoding escapes, here for natively
+ * authored text: both fences on their own lines (an indented opener's
+ * indentation carries to the closer), the block set apart from the text
+ * after it. Complete fences, single-line `$$…$$` and code stay untouched;
+ * a block that never closes before a blank line stays as written. */
+export function frameDisplayMath(text: string): string {
+	if (!text.includes("$$")) return text;
+	return readContentSpans(text).map((span) => {
+		if (span.kind === "prose") return frameGluedClosers(span.raw);
+		// Only the reader's FLOW blocks (multi-line display) — never inline $$…$$.
+		if (span.kind !== "math" || !span.display || !span.body.includes("\n") || /^[ \t]*\r?\n/.test(span.body)) return span.raw;
+		// The reader's flow block with content on the opener line.
+		return `${span.open}\n${span.body.replace(/\r?\n[ \t]*$/, "")}\n${span.close}`;
+	}).join("");
+}
+
+const FENCE_LINE = /^[ \t]{0,3}\$+[ \t]*\r?$/;
+/** A line ending in an unescaped dollar run (group 1). */
+const GLUED_END = /(?<![\\$])(\$+)[ \t]*\r?$/;
+
+/** Prose lines: an opener-only `$$` line, formula lines, and a last line
+ * ENDING in the same dollar run (before any blank line) → framed. */
+function frameGluedClosers(prose: string): string {
+	const lines = prose.split("\n");
+	const out: string[] = [];
+	for (let i = 0; i < lines.length; i++) {
+		const opener = /^([ \t]{0,3})(\${2,})[ \t]*\r?$/.exec(lines[i]!);
+		if (!opener) {
+			out.push(lines[i]!);
+			continue;
+		}
+		const [, indent, run] = opener;
+		let closeAt = -1;
+		for (let j = i + 1; j < lines.length; j++) {
+			const line = lines[j]!;
+			if (/^[ \t]*\r?$/.test(line)) break; // a blank line ends the attempt
+			if (FENCE_LINE.test(line)) break; // a real closer: Markdown has it
+			const end = GLUED_END.exec(line);
+			const glued = end && end[1]!.length === run!.length ? end : null;
+			if (glued) {
+				closeAt = j;
+				lines[j] = line.slice(0, glued.index).replace(/[ \t]+$/, "");
+				break;
+			}
+		}
+		if (closeAt < 0) {
+			out.push(lines[i]!);
+			continue;
+		}
+		out.push(...lines.slice(i, closeAt + 1), `${indent}${run}`);
+		// Set the block apart from text that follows on the next line.
+		const after = lines[closeAt + 1];
+		if (after !== undefined && !/^[ \t]*\r?$/.test(after)) out.push("");
+		i = closeAt;
+	}
+	return out.join("\n");
+}
+
 /** Presentation-only, language-independent recovery. Shape parsing, saved
  * identities, grading and model history must use the unprojected source. */
 export function repairMathForDisplay(text: string): string {
-	return healOverescapedCommands(restoreMathEscapes(recoverDocumentLayout(text)));
+	return frameDisplayMath(healOverescapedCommands(restoreMathEscapes(recoverDocumentLayout(text))));
 }

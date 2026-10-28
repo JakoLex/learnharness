@@ -250,3 +250,35 @@ describe("practice display surfaces", () => {
 		assert.deepEqual(toLlmMessages(concluded), history);
 	});
 });
+
+// A display block whose fence is glued to the formula (live, 2026-10-28):
+// the practice problem wrote `$$\nM=\begin{pmatrix}…\end{pmatrix}$$`, the
+// closing dollars reached KaTeX and the matrix rendered as a raw error.
+describe("glued display-math fences are framed for display", () => {
+	const statement = "Ein Kommilitone schreibt hin:\n\n$$\nM=\\begin{pmatrix} 1 & -2 & 4\\\\ 2 & 0 & -3\\\\ -4 & 3 & 0 \\end{pmatrix}$$\n\n1. Kann $M$ der Generator sein?";
+
+	it("frames a glued closer and a glued opener; leaves good fences, one-line $$…$$ and code alone", async () => {
+		const { frameDisplayMath } = await import("../src/core/math-delims.ts");
+		assert.equal(frameDisplayMath("$$\nx=1$$"), "$$\nx=1\n$$");
+		assert.equal(frameDisplayMath("$$x=1\n$$"), "$$\nx=1\n$$");
+		assert.equal(frameDisplayMath("See:\n$$\na\nb$$\nafter"), "See:\n$$\na\nb\n$$\n\nafter", "text after the block is set apart");
+		assert.equal(frameDisplayMath("$$\na\nb$$ after"), "$$\na\nb$$ after", "a closer mid-line is not a glued fence");
+		assert.equal(frameDisplayMath("The map $$f(x)$$ is smooth."), "The map $$f(x)$$ is smooth.", "inline $$…$$ stays inline");
+		for (const fine of ["$$\nx=1\n$$", "inline $$x=1$$ here", "```\n$$\nx$$\n```", "no math"]) {
+			assert.equal(frameDisplayMath(fine), fine, fine);
+		}
+		assert.equal(frameDisplayMath("1. Item\n   $$\n   x$$"), "1. Item\n   $$\n   x\n   $$", "a list item's indentation carries to the closer");
+	});
+
+	it("the problem card renders the matrix as display math, not a KaTeX error", () => {
+		const html = renderToStaticMarkup(<ToolContentResponse>{statement}</ToolContentResponse>);
+		assert.ok(!html.includes("katex-error"), "no parse error");
+		assert.ok(html.includes("katex-display") && html.includes("pmatrix"), "the matrix is display math");
+	});
+
+	it("chat prose gets the same framing", () => {
+		const html = renderToStaticMarkup(<MessageResponse>{statement}</MessageResponse>);
+		assert.ok(!html.includes("katex-error"));
+		assert.ok(html.includes("katex-display"));
+	});
+});
