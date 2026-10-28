@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/components/api-fetch";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatSettings, ModelCatalogEntry, ModelCatalogResponse, ModelsSettings, UserSettings } from "@/src/core";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -59,14 +60,14 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// reads the models section alone.
 	const readRecord = useCallback(() => {
 		if (chatId) {
-			fetch(`/api/chats/${chatId}`)
+			apiFetch(`/api/chats/${chatId}`)
 				.then((r) => { if (!r.ok) throw new Error(`session read failed: ${r.status}`); return r.json() as Promise<{ settings?: ChatSettings }>; })
 				.then((body) => setSession({ settings: body.settings }))
 				.catch(() => {
 					/* same read-only posture as a models-section failure */
 				});
 		}
-		fetch("/api/settings")
+		apiFetch("/api/settings")
 			.then((r) => r.json() as Promise<{ settings: { models?: ModelsSettings } | null }>)
 			.then((body) => setModels(body.settings?.models ?? undefined))
 			.catch(() => {
@@ -153,7 +154,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 		async (next: ModelsSettings) => {
 			setError(null);
 			try {
-				const res = await fetch("/api/settings/models", {
+				const res = await apiFetch("/api/settings/models", {
 					method: "PUT",
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify(next),
@@ -188,7 +189,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 		async (next: ChatSettings) => {
 			setError(null);
 			try {
-				const res = await fetch(`/api/chats/${chatId}/settings`, {
+				const res = await apiFetch(`/api/chats/${chatId}/settings`, {
 					method: "PUT",
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify(next),

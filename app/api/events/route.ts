@@ -6,10 +6,12 @@
  * server seam (events-stream.ts); the framework route stays a thin
  * wrapper (the import law; tests drive the seam directly).
  */
-import { eventsResponse } from "@/src/server";
+import { eventsResponse, scoped } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
-export function GET(): Response {
+async function GETHandler(): Promise<Response> {
 	return eventsResponse();
 }
+
+export const GET = scoped(GETHandler, { project: "optional" });

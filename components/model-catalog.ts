@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/components/api-fetch";
 import { useCallback, useEffect, useState } from "react";
 import type { ModelCatalogResponse } from "@/src/core";
 import { onSettingsSaved } from "@/components/settings-signal";
@@ -20,7 +21,7 @@ function fetchCatalog(revalidate = false): void {
 	const generation = catalogGeneration;
 	catalogError = false;
 	publishCatalog();
-	catalogInflight = fetch("/api/models")
+	catalogInflight = apiFetch("/api/models")
 		.then((r) => { if (!r.ok) throw new Error(`catalog request failed: ${r.status}`); return r.json() as Promise<ModelCatalogResponse>; })
 		.then((c) => {
 			if (generation === catalogGeneration) { catalogCache = c; catalogError = false; publishCatalog(); }

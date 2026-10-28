@@ -4,7 +4,7 @@
  * extraction run (extractor → auditor → merger) over its raw text. Run
  * from this worktree only — data never crosses trees:
  *
- *   npx tsx --env-file=.env.local scripts/import-notes.ts <dir> [concurrency]
+ *   npx tsx --env-file=.env.local scripts/import-notes.ts --project <id> <dir> [concurrency]
  *
  * Default dir: real-data-extraction/learn-sessions (the prototype
  * learning-session exports — deliberately NOT imported as chats: they run
@@ -12,6 +12,7 @@
  * status chips do NOT see them (registry is per-process) — the dev server
  * sees runs triggered through /api/graph/import.
  */
+import { runScriptInProject } from "../src/server/script-scope.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createExtractionPipeline } from "../src/agent/subagents/extraction.ts";
@@ -62,4 +63,5 @@ async function main() {
 	);
 }
 
-main();
+// The data lives in a project (projects wave): --project <id>.
+runScriptInProject(main);

@@ -1,5 +1,9 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { activeDataScope, type DataScope } from "./src/store/data-scope.ts";
+
+/** Re-exported for the agent layer, which never imports src/store. */
+export { runUnscoped } from "./src/store/data-scope.ts";
 
 /** Repository root (this file is at <root>/config.ts). */
 export const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -18,18 +22,70 @@ const DATA_ROOT = process.env.LH_DATA_DIR
 	? path.resolve(process.env.LH_DATA_DIR)
 	: path.join(ROOT, "data");
 
+// ─── The data scope (projects wave, owner-approved 2026-10-28) ──────────────
+// DATA_ROOT is the BASE: it holds the accounts and the per-user roots.
+// Every mutable record below resolves through the running code's DataScope
+// (src/store/data-scope.ts): user-level files (settings, prompt overrides)
+// under the user root, project-level records (chats, graph, jobs, debug)
+// under the project root. Layout:
+//   local mode:    <base>/settings.json, <base>/projects/prj_<id>/{chats,graph,jobs,debug}
+//   accounts mode: <base>/users/<userId>/… (same shape per user)
+
+/** Unscoped access gets the legacy FLAT layout (user root = project root =
+ *  base) under tests and the explicit LH_FLAT_DATA=1 escape hatch only —
+ *  decided once at load (a test flipping NODE_ENV mid-run keeps its
+ *  fixtures). A running server refuses loudly instead: code that lost its
+ *  scope must never read or write a ghost location. `allowed` is the test
+ *  seam for pinning the refusal. */
+export const flatFallback = {
+	allowed: process.env.NODE_ENV === "test" || process.env.LH_FLAT_DATA === "1",
+};
+
+/** The running code's scope (see flatFallback for unscoped code). */
+export function currentScope(): DataScope {
+	const scope = activeDataScope();
+	if (scope) return scope;
+	if (flatFallback.allowed) {
+		return { userId: "local", admin: true, userRoot: DATA_ROOT, project: { id: "flat", root: DATA_ROOT } };
+	}
+	throw new Error("No data scope: user/project data was accessed outside a scoped request");
+}
+
+/** The scoped user's root (settings.json, prompts/, projects/). */
+export function userRoot(): string {
+	return currentScope().userRoot;
+}
+
+/** The scoped project's root (chats/, graph/, jobs/, debug/). */
+export function projectRoot(): string {
+	const project = currentScope().project;
+	if (!project) throw new Error("No project in scope: project data was accessed by a user-level request");
+	return project.root;
+}
+
 export const PATHS = {
 	root: ROOT,
 	/** Teacher system prompt — the agent's instructions (src/agent/). */
 	teacherPrompt: path.join(ROOT, "src", "agent", "system-prompt.md"),
+	/** The data BASE (LH_DATA_DIR): accounts and per-user roots live here. */
 	data: DATA_ROOT,
-	/** Chat sessions (AI SDK UIMessage transcripts, one JSON file per chat). */
-	chats: path.join(DATA_ROOT, "chats"),
-	graph: path.join(DATA_ROOT, "graph"),
-	/** Debug artifacts (env-gated): data/debug/provider-events/<chatId>.jsonl
+	/** Chat sessions (one JSON file per chat) — the scoped project's. */
+	get chats() {
+		return path.join(projectRoot(), "chats");
+	},
+	get graph() {
+		return path.join(projectRoot(), "graph");
+	},
+	/** Sub-agent job records — the scoped project's. */
+	get jobs() {
+		return path.join(projectRoot(), "jobs");
+	},
+	/** Debug artifacts (env-gated): <project>/debug/provider-events/<chatId>.jsonl
 	 * raw provider stream recordings (src/agent/provider-events.ts). */
-	debug: path.join(DATA_ROOT, "debug"),
-} as const;
+	get debug() {
+		return path.join(projectRoot(), "debug");
+	},
+};
 
 // ─── Models ────────────────────────────────────────────────────────────────
 // BYOK ALL THE WAY DOWN (owner, 2026-09-22): there are NO factory default
@@ -60,38 +116,54 @@ export type ModelRole =
  * TRUTH (owner, 2026-09-30): edges are a derived view, never stored.
  */
 export const LEDGER_FILES = {
-	nodes: path.join(PATHS.graph, "nodes.jsonl"),
-	chains: path.join(PATHS.graph, "chains.jsonl"),
-	sessions: path.join(PATHS.graph, "sessions.jsonl"),
+	get nodes() {
+		return path.join(PATHS.graph, "nodes.jsonl");
+	},
+	get chains() {
+		return path.join(PATHS.graph, "chains.jsonl");
+	},
+	get sessions() {
+		return path.join(PATHS.graph, "sessions.jsonl");
+	},
 	/** Per-message extraction coverage (contracts/graph.ts CoverageEntry;
 	 *  the checkpoint's replacement for chat extractions — notes keep
 	 *  sessions.jsonl, whole-file as they are). */
-	coverage: path.join(PATHS.graph, "coverage.jsonl"),
-} as const;
+	get coverage() {
+		return path.join(PATHS.graph, "coverage.jsonl");
+	},
+};
 
 /**
  * Notes-import bookkeeping (NOT a ledger): one JSON map, src-id → NotesSource
  * record (contracts/graph.ts) — the file path + import time + the run's usage
  * log. Read-modify-write like a chat file, not append-only like the ledgers.
  */
-export const SOURCES_FILE = path.join(PATHS.graph, "sources.json");
+export function sourcesFile(): string {
+	return path.join(PATHS.graph, "sources.json");
+}
 /** The layout ledger (read-modify-write like sources.json): nodeId →
  *  {x,y} resting positions from the incremental settle (core/layout.ts).
  *  Carries an updatedAt stamp for future live-physics conflict handling. */
-export const POSITIONS_FILE = path.join(PATHS.graph, "positions.json");
+export function positionsFile(): string {
+	return path.join(PATHS.graph, "positions.json");
+}
 
 /**
  * Graph render settings (the settings-panel controls): one small JSON blob,
  * read-modify-write. Shared shape/sanitizer: src/core/render-settings.ts.
  */
-export const RENDER_SETTINGS_FILE = path.join(PATHS.graph, "render-settings.json");
+export function renderSettingsFile(): string {
+	return path.join(PATHS.graph, "render-settings.json");
+}
 
 /** The graph-family FORMAT STAMP sidecar (schema-versioning wave,
  *  2026-10-10): one version for the whole family — the four JSONL ledgers,
  *  sources.json, render-settings.json. LAZY v1: absent = v1; the first
  *  graph-family write creates it. positions.json is REBUILDABLE and rides
  *  along unversioned by design (owner ruling). */
-export const GRAPH_FORMAT_FILE = path.join(PATHS.graph, "format.json");
+export function graphFormatFile(): string {
+	return path.join(PATHS.graph, "format.json");
+}
 
 /**
  * THE USER SETTINGS RECORD (settings-storage wave, 2026-09-19): one
@@ -109,7 +181,9 @@ export const GRAPH_FORMAT_FILE = path.join(PATHS.graph, "format.json");
  * with per-session models, owner 2026-09-28 — sessions own their model
  * from birth, stamped from the strong slot.)
  */
-export const SETTINGS_FILE = path.join(DATA_ROOT, "settings.json");
+export function settingsFile(): string {
+	return path.join(userRoot(), "settings.json");
+}
 
 /**
  * User prompt-override files (settings-storage wave, 2026-09-19): the
@@ -124,7 +198,9 @@ export const SETTINGS_FILE = path.join(DATA_ROOT, "settings.json");
  * remove, or reorder fragments adapt automatically; an override keyed to
  * a vanished segment stops composing but stays on disk.
  */
-export const PROMPTS_OVERRIDE_DIR = path.join(DATA_ROOT, "prompts");
+export function promptsOverrideDir(): string {
+	return path.join(userRoot(), "prompts");
+}
 
 /**
  * THE AUTH/KEY STORE (auth-keys wave, 2026-09-19): BYOK provider keys in a

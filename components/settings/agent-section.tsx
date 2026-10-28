@@ -51,6 +51,7 @@
  * missing (the toggle painted its old state until a remount re-fetched).
  */
 
+import { apiFetch } from "@/components/api-fetch";
 import { XIcon } from "lucide-react";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { MenuShell } from "@/components/menu-shell";
@@ -446,7 +447,7 @@ export function AgentSection({
 	const menuAnchorRef = useRef<HTMLSpanElement>(null);
 
 	const refreshSearch = () =>
-		fetch("/api/search")
+		apiFetch("/api/search")
 			.then((r) => r.json())
 			.then((body: { available: boolean; engine: string | null; reason: string }) => setSearch(body))
 			.catch(() => setSearch(null));
@@ -459,7 +460,7 @@ export function AgentSection({
 	 *  a remount. Keeps the last-good view on a failed re-read (the
 	 *  initial mount fetch below owns the loading/null state). */
 	const readPrompts = useCallback(() => {
-		fetch("/api/settings/prompts")
+		apiFetch("/api/settings/prompts")
 			.then((r) => r.json())
 			.then((body: { prober: SegmentInfo[]; teacher: SegmentInfo[] }) => setPrompts(body))
 			.catch(() => {});
@@ -476,11 +477,11 @@ export function AgentSection({
 	});
 
 	useEffect(() => {
-		fetch("/api/settings/prompts")
+		apiFetch("/api/settings/prompts")
 			.then((r) => r.json())
 			.then((body: { prober: SegmentInfo[]; teacher: SegmentInfo[] }) => setPrompts(body))
 			.catch(() => setPrompts(null));
-		fetch("/api/keys")
+		apiFetch("/api/keys")
 			.then((r) => r.json())
 			.then((body: { keys: { id: string; present: boolean }[] }) => {
 				const present: Partial<Record<(typeof SEARCH_ENGINES)[number], boolean>> = {};
@@ -533,7 +534,7 @@ export function AgentSection({
 
 	async function saveSegment(path: string, text: string) {
 		setSegmentStatus(null);
-		const res = await fetch(`/api/settings/prompts/${path}`, {
+		const res = await apiFetch(`/api/settings/prompts/${path}`, {
 			method: "PUT",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ text }),
@@ -558,7 +559,7 @@ export function AgentSection({
 
 	async function deleteSegment(path: string) {
 		setSegmentStatus(null);
-		const res = await fetch(`/api/settings/prompts/${path}`, { method: "DELETE" });
+		const res = await apiFetch(`/api/settings/prompts/${path}`, { method: "DELETE" });
 		if (!res.ok) {
 			setSegmentStatus(`Delete failed: ${res.status}`);
 			return;

@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
 import { emit } from "../core/events.ts";
+import { runUnscoped } from "../../config.ts";
 import { MODEL_FALLBACK_DIAGNOSTIC, MODEL_OUTAGE_MS, type ModelOutage } from "../core/model-fallback.ts";
 
 /**
@@ -63,13 +64,17 @@ export function markModelDown(key: string, reason: string, now = Date.now()): vo
 	const previous = outages.get(key);
 	if (previous?.timer) clearTimeout(previous.timer);
 	const entry: OutageEntry = { until: now + MODEL_OUTAGE_MS, reason };
-	entry.timer = setTimeout(() => {
-		if (outages.get(key) === entry) outages.delete(key);
+	// An outage is process-wide: announce it (and its expiry) outside the
+	// failing call's user/project scope, so every window's dock hears it.
+	runUnscoped(() => {
+		entry.timer = setTimeout(() => {
+			if (outages.get(key) === entry) outages.delete(key);
+			emit("activity-changed", {});
+		}, MODEL_OUTAGE_MS);
+		entry.timer.unref?.();
+		outages.set(key, entry);
 		emit("activity-changed", {});
-	}, MODEL_OUTAGE_MS);
-	entry.timer.unref?.();
-	outages.set(key, entry);
-	emit("activity-changed", {});
+	});
 }
 
 /** The live down-mark of a primary, or undefined when it may be tried. */

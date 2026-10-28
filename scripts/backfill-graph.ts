@@ -3,8 +3,9 @@
  * the redesigned pipeline (vision §1, commit b07c907). Run from the master
  * tree only — data never crosses trees:
  *
- *   npx tsx --env-file=.env.local scripts/backfill-graph.ts
+ *   npx tsx --env-file=.env.local scripts/backfill-graph.ts --project <id> [chatId]
  */
+import { runScriptInProject } from "../src/server/script-scope.ts";
 import { chatStore } from "../src/store/chats.ts";
 import { graphStore } from "../src/store/graph.ts";
 import { createExtractionPipeline } from "../src/agent/subagents/extraction.ts";
@@ -39,4 +40,5 @@ async function main() {
 	);
 }
 
-main();
+// The data lives in a project (projects wave): --project <id>.
+runScriptInProject(main);

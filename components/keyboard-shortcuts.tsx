@@ -23,6 +23,7 @@
  * event first and can claim it with stopPropagation.
  */
 
+import { useProjectPath } from "@/components/project-route";
 import { useEffect, useRef, useState } from "react";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
 import { useRouter } from "next/navigation";
@@ -45,6 +46,7 @@ export { kbdEventForAction };
 
 export function KeyboardShortcuts() {
 	const router = useRouter();
+	const projectPath = useProjectPath();
 	const [cheatOpen, setCheatOpen] = useState(false);
 	const { open: openSettings } = useSettingsDialog();
 
@@ -52,10 +54,12 @@ export function KeyboardShortcuts() {
 	// (attached once) never goes stale.
 	const handlersRef = useRef<{
 		router: ReturnType<typeof useRouter>;
+		/** In-project paths (projects wave): the list (/) outside a project. */
+		projectPath: (path?: string) => string;
 		setCheatOpen: (v: boolean) => void;
 		openSettings: () => void;
-	}>({ router, setCheatOpen, openSettings });
-	handlersRef.current = { router, setCheatOpen, openSettings };
+	}>({ router, projectPath, setCheatOpen, openSettings });
+	handlersRef.current = { router, projectPath, setCheatOpen, openSettings };
 
 	useEffect(() => {
 		const onKeyDown = (e: KeyboardEvent) => {
@@ -117,7 +121,7 @@ export function KeyboardShortcuts() {
 			// ride the window event for the mounted surface to catch.
 			switch (action) {
 				case "new-session":
-					handlersRef.current.router.push("/chat/new");
+					handlersRef.current.router.push(handlersRef.current.projectPath("/chat/new"));
 					break;
 				case "open-settings":
 					// Settings-app wave: the dialog is the surface, the URL is
@@ -125,7 +129,7 @@ export function KeyboardShortcuts() {
 					handlersRef.current.openSettings();
 					break;
 				case "jump-graph":
-					handlersRef.current.router.push("/");
+					handlersRef.current.router.push(handlersRef.current.projectPath());
 					break;
 				case "cheat-sheet":
 					handlersRef.current.setCheatOpen(true);

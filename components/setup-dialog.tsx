@@ -36,6 +36,7 @@
  * CMU title, z-50.
  */
 
+import { apiFetch } from "@/components/api-fetch";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
@@ -283,7 +284,7 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 
 	useEffect(() => {
 		let cancelled = false;
-		fetch("/api/keys")
+		apiFetch("/api/keys")
 			.then((r) => r.json())
 			.then((b: { providers?: ProviderKeyInfo[] }) => { if (!cancelled) setKeyProviders(b.providers ?? []); })
 			.catch(() => { if (!cancelled) setKeyProviders([]); });
@@ -377,7 +378,7 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 		if (!keyProvider || !keyValue.trim() || keySaving) return;
 		setKeySaving(true);
 		setKeyError(null);
-		const res = await fetch(`/api/keys/${encodeURIComponent(keyProvider.envVar)}`, {
+		const res = await apiFetch(`/api/keys/${encodeURIComponent(keyProvider.envVar)}`, {
 			method: "PUT",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ value: keyValue }),
@@ -405,7 +406,7 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 				...(level ? { thinkingLevel: level } : {}),
 			};
 		}
-		const res = await fetch("/api/settings/models", {
+		const res = await apiFetch("/api/settings/models", {
 			method: "PUT",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify(models),

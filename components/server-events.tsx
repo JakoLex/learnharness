@@ -24,6 +24,9 @@
  * React glue is an adapter seam like lh:turn-state (untested by
  * precedent, components/session.ts).
  */
+import { usePathname } from "next/navigation";
+import { apiUrlWithProject } from "@/components/api-fetch";
+import { projectIdFromPath } from "@/components/project-route";
 import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { SERVER_EVENT_TYPES, type ServerEventType, type ServerEvents } from "@/src/core";
 
@@ -35,8 +38,11 @@ export interface NotifySource {
 	onEvent(name: string, cb: (data: string) => void): void;
 }
 
-export function openEventsChannel(): NotifySource {
-	const es = new EventSource("/api/events");
+/** The window's channel, scoped to the project its URL shows (projects
+ *  wave — the server delivers only that project's events plus user-wide
+ *  and process-wide ones). */
+export function openEventsChannel(projectId: string | null = null): NotifySource {
+	const es = new EventSource(apiUrlWithProject("/api/events", projectId));
 	return {
 		close: () => es.close(),
 		onOpen: (cb) => {
@@ -121,7 +127,10 @@ export function useNotifyHub() { return useContext(EventsContext); }
 
 export function ServerEventsProvider({ children, connect }: { children: ReactNode; connect?: () => NotifySource }) {
 	const hub = useMemo(() => createNotifyHub(), []);
-	useEffect(() => wireSource((connect ?? openEventsChannel)(), hub), [hub, connect]);
+	// Switching project reopens the channel in the new project's scope; the
+	// reopen fires every resync, so consumers refetch their truth.
+	const projectId = projectIdFromPath(usePathname());
+	useEffect(() => wireSource(connect ? connect() : openEventsChannel(projectId), hub), [hub, connect, projectId]);
 	return <EventsContext.Provider value={hub}>{children}</EventsContext.Provider>;
 }
 

@@ -19,6 +19,7 @@
  * with the other navigations — mod+, pushes /settings from anywhere.)
  */
 
+import { apiFetch } from "@/components/api-fetch";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { FACTORY_SETTINGS, type AppearanceSettings } from "@/src/core";
 
@@ -155,7 +156,7 @@ export function AppearanceProvider({ children }: { children: React.ReactNode }) 
 	// delta; resolution happens here against the compiled factory.
 	useEffect(() => {
 		let alive = true;
-		fetch("/api/settings")
+		apiFetch("/api/settings")
 			.then((r) => r.json())
 			.then((body: { settings?: Record<string, unknown> }) => {
 				if (!alive) return;

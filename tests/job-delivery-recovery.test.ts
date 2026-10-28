@@ -37,8 +37,11 @@ async function until(predicate: () => boolean): Promise<void> {
 	while (!predicate()) { assert(Date.now() < end, "fixture condition timed out"); await delay(10); }
 }
 function sweep(): void {
-	const global = globalThis as { __lhWakePipeline?: { lastSweepAt: number } };
-	if (global.__lhWakePipeline) global.__lhWakePipeline.lastSweepAt = 0;
+	const global = globalThis as { __lhWakePipeline?: { lastSweepAt: number; sweeps?: Map<string, number> } };
+	if (global.__lhWakePipeline) {
+		global.__lhWakePipeline.lastSweepAt = 0;
+		global.__lhWakePipeline.sweeps?.clear(); // the per-project throttle (projects wave)
+	}
 	recoverStaleJobs();
 }
 function chat(blocked = false) {

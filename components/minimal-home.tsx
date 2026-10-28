@@ -18,6 +18,7 @@
  * The practice pick flow mirrors GraphView's contract verbatim (home
  * lifts the pick set; the chip opens the overlay in select mode).
  */
+import { apiFetch } from "@/components/api-fetch";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ListTreeIcon, UploadIcon } from "lucide-react";
 import { ChainTableOverlay } from "@/components/chain-table.tsx";
@@ -100,15 +101,15 @@ export function MinimalHome({
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	const readState = useCallback(() => {
-		fetch("/api/graph")
+		apiFetch("/api/graph")
 			.then((res) => res.json() as Promise<GraphSnapshot>)
 			.then(setSnapshot)
 			.catch(() => {});
-		fetch("/api/graph/costs")
+		apiFetch("/api/graph/costs")
 			.then((res) => res.json() as Promise<GraphCostSummary>)
 			.then(setCosts)
 			.catch(() => {});
-		fetch("/api/chats")
+		apiFetch("/api/chats")
 			.then((res) => res.json() as Promise<{ chats: ChatSummary[] }>)
 			.then((body) => setChats(body.chats))
 			.catch(() => {});

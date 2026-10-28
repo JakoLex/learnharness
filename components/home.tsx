@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/components/api-fetch";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CornerDownLeftIcon, DumbbellIcon } from "lucide-react";
@@ -146,7 +147,7 @@ export function Home({
 				title: t,
 				...(mode === "practice" ? { kind: "practice" } : {}),
 				...(practiceProps.length > 0 ? { graphContext: { propositions: practiceProps } } : {}),
-			}, fetch, JSON.stringify(catalog?.slots.strong));
+			}, apiFetch, JSON.stringify(catalog?.slots.strong));
 			router.push(target);
 		} catch {
 			startingRef.current = false;

@@ -1040,13 +1040,13 @@ describe("the extraction pipeline (extractor → auditor → merger)", () => {
 			"the run is registered at start",
 		);
 		const g = globalThis as { __lhExtractionRuns?: { running: Map<string, unknown> } };
-		assert.ok(g.__lhExtractionRuns?.running.has(chatId), "the registry lives on globalThis — no module-instance split can hide runs");
+		assert.ok(g.__lhExtractionRuns?.running.has(`${PATHS.graph}\u0000${chatId}`), "the registry lives on globalThis — no module-instance split can hide runs");
 		assert.deepEqual(await observer.runExtraction(chatId), { nodes: 0, chains: 0 }, "single-flight spans pipeline instances");
 
 		release();
 		assert.deepEqual(await first, { nodes: 0, chains: 0 }, "isolated job failure — the run resolves zeros");
 		assert.ok(!extractionStatuses().some((run) => run.chatId === chatId), "the registry entry clears when the run ends (however it ends)");
-		assert.ok(!g.__lhExtractionRuns?.running.has(chatId), "nothing leaks into the global registry");
+		assert.ok(!g.__lhExtractionRuns?.running.has(`${PATHS.graph}\u0000${chatId}`), "nothing leaks into the global registry");
 	});
 
 	it("throws for unknown chats", async () => {

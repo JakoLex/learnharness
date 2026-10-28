@@ -7,11 +7,12 @@
  * Reads ONLY the ledgers (nodes / edges / mappings / sources); writes ONLY
  * data/graph/positions.json — no LLM calls, no extraction, no chat records.
  *
- *   npx tsx scripts/replay-layout.ts [--depth=vertical|radial]
+ *   npx tsx scripts/replay-layout.ts --project <id> [--depth=vertical|radial]
  *
  * --depth regenerates the ledger WITH inference-depth anchoring (the
  * playground mode baked into the rest state); omit it for the free layout.
  */
+import { runScriptInProject } from "../src/server/script-scope.ts";
 import { graphStore } from "../src/store/graph.ts";
 // --depth=vertical|radial: bake the playground depth mode into the ledger.
 const depthArg = process.argv.find((a) => a.startsWith("--depth="));
@@ -139,4 +140,5 @@ function main() {
 	);
 }
 
-main();
+// The data lives in a project (projects wave): --project <id>.
+runScriptInProject(main);

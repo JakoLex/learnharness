@@ -1,3 +1,5 @@
+import { currentProjectId } from "@/components/api-fetch";
+import { projectHref } from "@/components/project-paths";
 import { clearOpeningPrompt, OPENING_PROMPT_FAILURE, stashOpeningPrompt } from "./opening-prompt";
 
 interface SessionCreation {
@@ -29,6 +31,8 @@ export class SessionStarter {
 			this.created = { identity, id: result.id };
 		}
 		if (!stashOpeningPrompt(this.created.id, body.title)) throw new Error(OPENING_PROMPT_FAILURE);
-		return `/chat/${this.created.id}`;
+		// The new session opens inside the window's project (projects wave).
+		const projectId = currentProjectId();
+		return projectId ? projectHref(projectId, `/chat/${this.created.id}`) : `/chat/${this.created.id}`;
 	}
 }

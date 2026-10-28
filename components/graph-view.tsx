@@ -63,6 +63,8 @@
  * camera never moves.
  */
 
+import { useProjectId, useProjectPath } from "@/components/project-route";
+import { apiFetch } from "@/components/api-fetch";
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { NotesImportErrors, useNotesImport } from "@/components/notes-import.tsx";
 import Link from "next/link";
@@ -116,6 +118,12 @@ const NODE_COLOR_TOKEN = "--primary";
 /** Per-device graph camera persistence (zoom+pan view state). v1 in the
  *  key: the stored shape is the renderer's d3 transform {k, x, y}. */
 const CAMERA_STORAGE_KEY = "lh.graph.camera.v1";
+
+/** The camera key of one project's graph (projects wave): every project
+ *  keeps its own view. Outside a project (tests) the bare v1 key. */
+export function cameraStorageKey(projectId: string | null): string {
+	return projectId ? `${CAMERA_STORAGE_KEY}:${projectId}` : CAMERA_STORAGE_KEY;
+}
 
 // ---- Render settings (the settings-panel controls) ------------------------
 //
@@ -985,6 +993,8 @@ export function GraphView({
 	onPracticeSelectionChange?: (nodes: { id: string; name: string; statement: string }[]) => void;
 	onChainSelectClose?: () => void;
 }) {
+	const projectPath = useProjectPath();
+	const cameraKey = cameraStorageKey(useProjectId());
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const cardRef = useRef<HTMLDivElement | null>(null);
@@ -1029,14 +1039,14 @@ export function GraphView({
 		setSettings(update);
 	};
 	const saveToServer = (s: RenderSettings) => {
-		fetch("/api/graph/render-settings", {
+		apiFetch("/api/graph/render-settings", {
 			method: "PUT",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify(s),
 		}).catch((err) => console.error("[graph] settings save failed:", err));
 	};
 	useEffect(() => {
-		fetch("/api/graph/render-settings")
+		apiFetch("/api/graph/render-settings")
 			.then((res) => (res.ok ? (res.json() as Promise<unknown>) : null))
 			.then((raw) => {
 				// Apply only if the user hasn't already moved a slider —
@@ -1096,7 +1106,7 @@ export function GraphView({
 	}, [chainSelectOpen]);
 	useEffect(() => {
 		let cancelled = false;
-		fetch("/api/graph")
+		apiFetch("/api/graph")
 			.then((res) => res.json() as Promise<GraphSnapshot>)
 			.then((data) => {
 				if (!cancelled) setSnapshot(data);
@@ -1141,7 +1151,7 @@ export function GraphView({
 	const [pipelineRuns, setPipelineRuns] = useState<{ id: string; chatId: string; title: string; phase: string; startedAt: number }[]>([]);
 	const rowIdsRef = useRef<Set<string>>(new Set());
 	const readPipelineStatus = useCallback(() => {
-		fetch("/api/graph/status")
+		apiFetch("/api/graph/status")
 			.then((res) => res.json() as Promise<{ runs: typeof pipelineRuns }>)
 			.then(({ runs }) => {
 				setPipelineRuns(runs);
@@ -1183,7 +1193,7 @@ export function GraphView({
 	// the view — the pill just stays on its last numbers.
 	const [costs, setCosts] = useState<GraphCostSummary | null>(null);
 	const refreshCosts = useCallback(() => {
-		fetch("/api/graph/costs")
+		apiFetch("/api/graph/costs")
 			.then((res) => res.json() as Promise<GraphCostSummary>)
 			.then(setCosts)
 			.catch(() => {});
@@ -1324,7 +1334,7 @@ export function GraphView({
 		// corrupt → undefined → the renderer fits on first open, ever.
 		let initialCamera: { k: number; x: number; y: number } | null = null;
 		try {
-			const stored = localStorage.getItem(CAMERA_STORAGE_KEY);
+			const stored = localStorage.getItem(cameraKey);
 			if (stored) {
 				const parsed = JSON.parse(stored) as { k?: unknown; x?: unknown; y?: unknown };
 				if (
@@ -1347,7 +1357,7 @@ export function GraphView({
 			cameraTimer = setTimeout(() => {
 				cameraTimer = null;
 				try {
-					localStorage.setItem(CAMERA_STORAGE_KEY, JSON.stringify(t));
+					localStorage.setItem(cameraKey, JSON.stringify(t));
 				} catch {
 					// Storage full/blocked: camera persistence is best-effort.
 				}
@@ -1392,7 +1402,7 @@ export function GraphView({
 				// Live physics settled: persist the new rest state. Fire-and-
 				// forget — the next snapshot fetch carries the ledger anyway.
 				onCommit: (positions) => {
-					void fetch("/api/graph/positions", {
+					void apiFetch("/api/graph/positions", {
 						method: "PUT",
 						headers: { "Content-Type": "application/json" },
 						body: JSON.stringify(positions),
@@ -1410,7 +1420,7 @@ export function GraphView({
 				clearTimeout(cameraTimer);
 				cameraTimer = null;
 				try {
-					localStorage.setItem(CAMERA_STORAGE_KEY, JSON.stringify(lastCamera));
+					localStorage.setItem(cameraKey, JSON.stringify(lastCamera));
 				} catch {
 					// best-effort
 				}
@@ -1695,7 +1705,7 @@ export function GraphView({
 								return (
 									<div key={sourceId} className="flex items-center gap-1.5">
 										<Link
-											href={propositionSessionHref(selected.node, sourceId)}
+											href={projectPath(propositionSessionHref(selected.node, sourceId))}
 											scroll={false}
 											className="min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent"
 										>

@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/components/api-fetch";
 import { useContext, useState } from "react";
 import { ChatActionsContext } from "@/components/chat";
 import { DownloadIcon, MaximizeIcon } from "lucide-react";
@@ -62,7 +63,7 @@ export function VisualOutputCard({
 	const toggleInverted = (next: boolean) => {
 		setInverted(next);
 		if (!actions?.chatId || !messageId) return;
-		void fetch(`/api/chats/${actions.chatId}/artifact-ui`, {
+		void apiFetch(`/api/chats/${actions.chatId}/artifact-ui`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ input: { messageId, inverted: next } }),

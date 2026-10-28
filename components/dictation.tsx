@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/components/api-fetch";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2Icon, MicIcon } from "lucide-react";
 import { useSettingsDialog } from "@/components/settings/settings-dialog";
@@ -117,7 +118,7 @@ export const DICTATION_KEYLESS = "Dictation needs a Deepgram key";
  *  dev-speak, so the error becomes the short client-authored line
  *  (zero-keys wave, owner 2026-09-25). */
 async function mintFreshToken(): Promise<string> {
-	const res = await fetch("/api/stt/token");
+	const res = await apiFetch("/api/stt/token");
 	const data = (await res.json()) as { token?: string; message?: string };
 	if (!res.ok || !data.token) {
 		if (res.status === 503) throw new Error(DICTATION_KEYLESS);

@@ -82,15 +82,17 @@ export function composeInstructions(kind: AgentKind, switches?: Record<string, b
 		.join("\n\n---\n\n");
 }
 
-// The switch-free source composition, cached per kind (module-load once).
+// The switch-free source composition, cached per kind on first use (not at
+// module load: composing walks the scoped user's override dir, and imports
+// run outside any request scope — projects wave). No switches means no
+// override composes, so the cache is the same for every user.
 // With promptSwitches provided, baseAgentOptions composes FRESH per turn —
 // an override file written while its switch is ON must flip the next
 // turn's composition; the cache serves only the switches-less path.
-const composedInstructions: Record<AgentKind, string> = {
-	prober: composeInstructions("prober"),
-	teacher: composeInstructions("teacher"),
-	practice: composeInstructions("practice"),
-};
+const composedInstructions: Partial<Record<AgentKind, string>> = {};
+function sourceInstructions(kind: AgentKind): string {
+	return (composedInstructions[kind] ??= composeInstructions(kind));
+}
 
 // Money channel (wave 4): the chat-handler passes a per-turn collector;
 // every model call's usage lands in the chat record's turns log
@@ -188,7 +190,7 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 	const stopper = makeQuestionStopper(kind);
 	const systemPrompt = opts.promptSwitches
 		? composeInstructions(kind, opts.promptSwitches)
-		: composedInstructions[kind]!;
+		: sourceInstructions(kind);
 	// Debug recorder (owner, 2026-10-04): raw provider events when
 	// LH_PROVIDER_EVENTS=1 and the caller handed a chatId; undefined is
 	// the normal no-observer path (tests, env-off).

@@ -1,5 +1,7 @@
-import { handleChatRequest } from "@/src/server";
+import { handleChatRequest, scoped } from "@/src/server";
 
-export async function POST(req: Request) {
+async function POSTHandler(req: Request) {
 	return handleChatRequest(req);
 }
+
+export const POST = scoped(POSTHandler, { project: "required" });

@@ -169,6 +169,8 @@ See [context panel](context-panel.md) for the per-request context breakdown the 
 opens, and its OpenScience attribution.
 See [fallback model](model-fallback.md) for the per-slot fallback that answers when a
 model fails before its first token.
+See [projects and accounts](projects-and-accounts.md) for the per-project data scope, the
+project list, and the LAN accounts mode (`LH_ACCOUNTS=1`).
 
 **Client-side question tools.** `quiz` and `ask_user_question` have no server `execute`: the tool call streams to the browser, the learner answers in the dock, the client grades via `question-core` and returns the verdict with `addToolOutput` — which fires the SDK continuation so the teacher resumes mid-turn. Options are shuffled deterministically (seeded by toolCallId) so server and client renders match. A pending quiz persisted in the chat record is exactly what makes **resume mid-question free**.
 

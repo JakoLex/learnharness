@@ -45,3 +45,7 @@ export * from "./observability.ts";
 export * from "./model-catalog.ts";
 export { subscriptionControlsResponse, subscriptionBrowserResponse } from "./web-subscription-http.ts";
 export { sessionCost } from "./pricing.ts";
+export * from "./scope.ts";
+export * from "./projects.ts";
+export * from "./accounts.ts";
+export { hasAccounts } from "../store/accounts.ts";

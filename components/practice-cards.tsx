@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/components/api-fetch";
 import { ToolContentResponse } from "@/components/ai-elements/message";
 import { cn } from "@/lib/utils";
 import type { ArtifactPartProps } from "@/src/core";
@@ -34,7 +35,7 @@ import { usePopoverDismiss } from "@/components/popover-dismiss";
  * card. */
 let nodeNameMapPromise: Promise<Record<string, string>> | null = null;
 function nodeNameMap(): Promise<Record<string, string>> {
-	nodeNameMapPromise ??= fetch("/api/graph")
+	nodeNameMapPromise ??= apiFetch("/api/graph")
 		.then((r) => (r.ok ? r.json() : { nodes: [] }))
 		.then((g: { nodes?: Array<{ id?: unknown; name?: unknown }> }) =>
 			Object.fromEntries(

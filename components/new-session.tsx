@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/components/api-fetch";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Conversation, ConversationContent, ConversationEmptyState } from "@/components/ai-elements/conversation";
@@ -261,7 +262,7 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 			setPickerOpen(true);
 			return;
 		}
-		void fetch("/api/graph")
+		void apiFetch("/api/graph")
 			.then((r) => r.json() as Promise<GraphSnapshot>)
 			.then((snap) => {
 				setSnapshot(snap);
@@ -305,7 +306,7 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 		startingRef.current = true;
 		setBusy(true);
 		setStartError(false);
-		void startDraftSession(draft, fetch, mode === "practice" ? "practice" : undefined, mode === "practice" ? picksRef.current : undefined,
+		void startDraftSession(draft, apiFetch, mode === "practice" ? "practice" : undefined, mode === "practice" ? picksRef.current : undefined,
 			starterRef.current, JSON.stringify(catalog?.slots.strong))
 			.then((target) => {
 				if (target) router.push(target);

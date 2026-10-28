@@ -21,6 +21,7 @@
  * switching sections never refetches.
  */
 
+import { apiFetch } from "@/components/api-fetch";
 import {
 	createContext,
 	useCallback,
@@ -47,6 +48,7 @@ import type { ModelsSettings } from "@/src/core";
 import { MENU_CLOSE_EVENT, MENU_OPEN_EVENT } from "@/components/menu-shell";
 import { notifySettingsSaved } from "@/components/settings-signal";
 import { KeysSection } from "./keys-section.tsx";
+import { AccountSection, AccountsSection, accountSectionIds, type Viewer } from "./account-section.tsx";
 import { Hint } from "@/components/ui/hint";
 import { AppearanceSection, GraphSection } from "./appearance-section.tsx";
 import { KeyboardSection } from "./keyboard-section.tsx";
@@ -63,8 +65,21 @@ const SECTIONS = [
 	{ id: "graph", label: "Graph" },
 	{ id: "keyboard", label: "Keyboard", hint: "Stored on this device" },
 	{ id: "general", label: "General" },
+	{ id: "account", label: "Account" },
+	{ id: "accounts", label: "Accounts" },
 ] as const;
 type SectionId = (typeof SECTIONS)[number]["id"];
+
+/** The sections a viewer gets (accounts wave, owner 2026-10-28): Providers
+ *  (keys + provider logins) is the admin's; Account/Accounts exist only
+ *  with accounts on. Until the viewer is known, the local layout. */
+export function visibleSectionIds(viewer: Viewer | null): SectionId[] {
+	const extra = accountSectionIds(viewer);
+	const admin = viewer?.user?.admin ?? true;
+	return SECTIONS.map((s) => s.id).filter((id) =>
+		id === "account" || id === "accounts" ? (extra as string[]).includes(id) : id !== "keys" || admin,
+	);
+}
 
 /** `open(section?, row?)` — the optional ROW deep-links into the Keys
  *  section with that row unfolded (zero-keys wave: the dictation error's
@@ -180,6 +195,17 @@ export function SettingsDialogBody({
 		};
 	}, []);
 	const [active, setActive] = useState<SectionId>(initialSection);
+	// Who is viewing (accounts wave): drives which sections exist.
+	const [viewer, setViewer] = useState<Viewer | null>(null);
+	useEffect(() => {
+		fetch("/api/auth/me", { cache: "no-store" })
+			.then((r) => (r.ok ? (r.json() as Promise<Viewer>) : null))
+			.then((v) => setViewer(v))
+			.catch(() => setViewer(null));
+	}, []);
+	const sectionIds = visibleSectionIds(viewer);
+	// A hidden section (Providers for a non-admin) lands on Agent instead.
+	const shown: SectionId = sectionIds.includes(active) ? active : "agent";
 	// A deep-link fired while the dialog is ALREADY open (first exercised by
 	// the wave-6 embedding picker's "Add a provider key first…" link — the
 	// picker itself died with wave 7, the mechanism is general) changes
@@ -193,7 +219,7 @@ export function SettingsDialogBody({
 	// (no record = factory everything), not a failure — the error state is
 	// a non-200 or a network throw only.
 	useEffect(() => {
-		fetch("/api/settings")
+		apiFetch("/api/settings")
 			.then((r) =>
 				r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`)),
 			)
@@ -230,7 +256,7 @@ export function SettingsDialogBody({
 			body: object,
 		) => {
 			setError(null);
-			const res = await fetch(`/api/settings/${section}`, {
+			const res = await apiFetch(`/api/settings/${section}`, {
 				method: "PUT",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify(body),
@@ -307,14 +333,14 @@ export function SettingsDialogBody({
 					data-testid="settings-nav"
 					className="flex w-44 shrink-0 flex-col gap-1 border-r border-border p-2"
 				>
-					{SECTIONS.map((s) => (
+					{SECTIONS.filter((s) => sectionIds.includes(s.id)).map((s) => (
 						<button
 							key={s.id}
 							type="button"
 							data-testid={`settings-nav-${s.id}`}
-							aria-current={active === s.id}
+							aria-current={shown === s.id}
 							className={`rounded-sm px-3 py-1.5 text-left font-ui text-sm transition-colors ${
-								active === s.id
+								shown === s.id
 									? "bg-accent text-foreground"
 									: "text-muted-foreground hover:bg-accent hover:text-foreground"
 							}`}
@@ -355,7 +381,7 @@ export function SettingsDialogBody({
 						</p>
 					) : (
 						<div>
-							{active === "general" && (
+							{shown === "general" && (
 								<SettingsSection
 									title="General"
 									testid="section-general"
@@ -368,12 +394,12 @@ export function SettingsDialogBody({
 									/>
 								</SettingsSection>
 							)}
-							{active === "keys" && (
+							{shown === "keys" && (
 								<SettingsSection title="Providers" testid="section-keys">
 									<KeysSection initialRow={initialRow ?? undefined} />
 								</SettingsSection>
 							)}
-							{active === "agent" && (
+							{shown === "agent" && (
 								<SettingsSection
 									title="Agent"
 									testid="section-agent"
@@ -395,7 +421,7 @@ export function SettingsDialogBody({
 									/>
 								</SettingsSection>
 							)}
-							{active === "appearance" && (
+							{shown === "appearance" && (
 								<SettingsSection
 									title="Appearance"
 									testid="section-appearance"
@@ -408,7 +434,7 @@ export function SettingsDialogBody({
 									/>
 								</SettingsSection>
 							)}
-							{active === "graph" && (
+							{shown === "graph" && (
 								<SettingsSection
 									title="Graph"
 									testid="section-graph"
@@ -421,13 +447,23 @@ export function SettingsDialogBody({
 									/>
 								</SettingsSection>
 							)}
-							{active === "keyboard" && (
+							{shown === "keyboard" && (
 								<SettingsSection
 									title="Keyboard"
 									hint="Stored on this device"
 									testid="section-keyboard"
 								>
 									<KeyboardSection />
+								</SettingsSection>
+							)}
+							{shown === "account" && viewer && (
+								<SettingsSection title="Account" testid="section-account">
+									<AccountSection viewer={viewer} />
+								</SettingsSection>
+							)}
+							{shown === "accounts" && viewer && (
+								<SettingsSection title="Accounts" hint="People who use this server" testid="section-accounts">
+									<AccountsSection viewer={viewer} />
 								</SettingsSection>
 							)}
 						</div>

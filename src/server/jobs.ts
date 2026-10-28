@@ -73,6 +73,8 @@ import { resolveConversationSpec } from "../core/settings-resolution.ts";
 import { connectionBackgroundAllowed, isSubscriptionProvider, onSubscriptionChange } from "../agent/subscription-connections.ts";
 import { isTurnRunning } from "./turn-liveness.ts";
 import type { Agent } from "@earendil-works/pi-agent-core";
+import { PATHS } from "../../config.ts";
+import { activeDataScope, runInDataScope, type DataScope } from "../store/data-scope.ts";
 
 /** Fires one server-side teacher turn: (chatId, input) → HTTP-ish status.
  *  Wave C: the input is the IDLE WAKE — every queued marker as the turn's
@@ -123,8 +125,28 @@ interface WakeState {
 	pumping: Set<string>;
 	/** Throttle bookkeeping for the stale-job sweep. */
 	lastSweepAt: number;
+	/** Per-project sweep throttle (projects wave): project jobs dir → last
+	 *  sweep — one project's sweep never starves another's. Optional: a
+	 *  globalThis state from before the wave lacks it. */
+	sweeps?: Map<string, number>;
+	/** chatId → the data scope its wake work runs in (projects wave): the
+	 *  connection watcher fires outside any request, so the chats it
+	 *  revisits re-enter the scope they were registered from. */
+	chatScopes?: Map<string, DataScope>;
 	stopConnectionWatch?: () => void;
 	automaticDeferred: WeakSet<Agent>;
+}
+
+/** Remember the running code's scope for this chat's wake work. */
+function rememberChatScope(chatId: string): void {
+	const scope = activeDataScope();
+	if (scope) (state().chatScopes ??= new Map()).set(chatId, scope);
+}
+
+/** Run `fn` in the chat's remembered scope (as-is when none was seen). */
+function inChatScope<T>(chatId: string, fn: () => T): T {
+	const scope = state().chatScopes?.get(chatId);
+	return scope ? runInDataScope(scope, fn) : fn();
 }
 
 interface LhWakeGlobal {
@@ -221,6 +243,7 @@ function finalizeSteer(steer: SteerMessage): void {
  * wake-acceptance/error semantics. Workers never await this promise. */
 export function deliverJobResult(steer: SteerMessage): Promise<void> {
 	const chatId = chatIdOf(steer);
+	rememberChatScope(chatId);
 	const entry = queueSteer(chatId, steer);
 	void pump(chatId);
 	return entry.promise;
@@ -290,6 +313,7 @@ function handOffEligible(chatId: string, agent: Agent): void {
  *  beat the registration: settlement needs a streamed response, which
  *  never happens inside the constructor call. */
 export function registerLiveAgent(chatId: string, agent: Agent, allowDeferred = true, wakeSteerIds?: ReadonlySet<string>): void {
+	rememberChatScope(chatId);
 	state().liveAgents.set(chatId, agent);
 	restorePendingDeliveries(chatId);
 	for (const entry of state().queues.get(chatId) ?? []) {
@@ -318,6 +342,7 @@ export interface UserSteerEntry {
 export function steerLiveChat(chatId: string, message: LhMessage): boolean {
 	const agent = state().liveAgents.get(chatId);
 	if (!agent) return false;
+	rememberChatScope(chatId);
 	const entry: UserSteerEntry = { message };
 	const q = state().userSteers.get(chatId) ?? [];
 	q.push(entry);
@@ -618,19 +643,20 @@ async function pump(chatId: string): Promise<void> {
 state().stopConnectionWatch?.();
 state().stopConnectionWatch = onSubscriptionChange(() => {
 	const s = state();
-	for (const [chatId, agent] of s.liveAgents) {
-		if (!isSubscriptionProvider(agent.state?.model?.provider) || automaticFollowUpAllowed(chatId, agent)) continue;
+	// Fired outside any request: each chat re-enters its own scope.
+	for (const [chatId, agent] of s.liveAgents) inChatScope(chatId, () => {
+		if (!isSubscriptionProvider(agent.state?.model?.provider) || automaticFollowUpAllowed(chatId, agent)) return;
 		const consumed = new Set(agent.state.messages.map((m) => (m as { id?: string }).id));
 		const pending = (s.queues.get(chatId) ?? []).filter((entry) => entry.handedTo === agent && !consumed.has(entry.steer.id));
-		if (pending.length === 0) continue;
+		if (pending.length === 0) return;
 		agent.clearSteeringQueue();
 		for (const entry of pending) entry.handedTo = undefined;
 		for (const entry of s.userSteers.get(chatId) ?? []) if (!consumed.has(entry.message.id)) entry.handedTo = undefined;
 		handOffEligible(chatId, agent); // only unconsumed learner input; never replay consumed steers
-	}
-	for (const chatId of s.queues.keys()) {
+	});
+	for (const chatId of s.queues.keys()) inChatScope(chatId, () => {
 		if (automaticFollowUpAllowed(chatId, s.liveAgents.get(chatId))) void pump(chatId);
-	}
+	});
 });
 
 function deferOrReject(chatId: string, entry: QueuedSteer, error: Error): void {
@@ -734,7 +760,9 @@ const SWEEP_THROTTLE_MS = 30_000;
 export function recoverStaleJobs(): void {
 	const s = state();
 	const now = Date.now();
-	if (now - s.lastSweepAt < SWEEP_THROTTLE_MS) return;
+	const sweeps = (s.sweeps ??= new Map());
+	if (now - (sweeps.get(PATHS.jobs) ?? 0) < SWEEP_THROTTLE_MS) return;
+	sweeps.set(PATHS.jobs, now);
 	s.lastSweepAt = now;
 	try {
 		for (const chat of stores.chatStore.listChats()) {

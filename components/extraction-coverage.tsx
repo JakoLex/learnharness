@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/components/api-fetch";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useActivity } from "@/components/activity-dock";
 import { usePopoverDismiss } from "@/components/popover-dismiss";
@@ -45,7 +46,7 @@ export interface SessionCoverage {
  *  nothing rather than a fake zero; the honest-render doctrine). */
 async function fetchCoverage(chatId: string): Promise<SessionCoverage | null> {
 	try {
-		const res = await fetch(`/api/chats/${encodeURIComponent(chatId)}`);
+		const res = await apiFetch(`/api/chats/${encodeURIComponent(chatId)}`);
 		if (!res.ok) return null;
 		const body = (await res.json()) as { coverage?: SessionCoverage | null };
 		return body.coverage ?? null;
@@ -69,7 +70,7 @@ export interface GraphRead {
  *  raw settings delta to the factory-true graph section. */
 export async function fetchGraphRead(): Promise<GraphRead | null> {
 	try {
-		const res = await fetch("/api/settings");
+		const res = await apiFetch("/api/settings");
 		if (!res.ok) return null;
 		const body = (await res.json()) as { settings?: Parameters<typeof resolveSettings>[0] };
 		const graph = resolveSettings(body.settings ?? null).graph;
@@ -85,7 +86,7 @@ export async function fetchGraphRead(): Promise<GraphRead | null> {
  *  real failure, where the caller reverts. */
 async function requestExtract(chatId: string): Promise<boolean> {
 	try {
-		const res = await fetch("/api/graph/coverage/extract", {
+		const res = await apiFetch("/api/graph/coverage/extract", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ chatId }),

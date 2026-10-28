@@ -25,9 +25,11 @@
  * ui-stream subscribe() pattern.
  */
 import { subscribe, type ServerEvent } from "../core/events.ts";
+import { activeDataScope, sameAudience } from "../store/data-scope.ts";
 
 /** One window's subscription as an SSE Response. */
 export function eventsResponse(): Response {
+	const subscriber = activeDataScope();
 	const encoder = new TextEncoder();
 	let teardown: (() => void) | undefined;
 	const stream = new ReadableStream<Uint8Array>({
@@ -57,7 +59,11 @@ export function eventsResponse(): Response {
 			// Attach FIRST, synchronously: no event can fall between
 			// construction and subscription (single-threaded — the same
 			// attach-then-replay law as ui-stream's subscribe()).
+			// PROJECT/USER FILTER (projects wave, 2026-10-28): emit() calls
+			// listeners synchronously, so the emitter's scope is the active
+			// one here — compare it to the scope this window subscribed in.
 			unsubscribe = subscribe((event: ServerEvent) => {
+				if (!sameAudience(subscriber, activeDataScope())) return;
 				const { type, ...payload } = event;
 				frame(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
 			});

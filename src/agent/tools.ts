@@ -1,3 +1,4 @@
+import { currentScope } from "../../config.ts";
 import { Type } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { invalidInputResult, questionResult, serverExecute } from "./tool-execute.ts";
@@ -27,6 +28,26 @@ import { healToolRecord } from "./tools/heal.ts";
 import type { GraphStore } from "../core/ports.ts";
 
 export { jobTools };
+
+/** HOST FILE ACCESS (accounts wave, owner-approved 2026-10-28): the file
+ *  tools (read/ls/find/grep) and the pdf job read the server machine's
+ *  filesystem — the admin's home, keys and every user's data. With
+ *  accounts on, only the admin's agents get them; other people bring
+ *  material in through notes import and attachments. Without accounts the
+ *  one local user is the admin. */
+export function hostFileAccess(): boolean {
+	return currentScope().admin;
+}
+
+function fileTools(): Record<string, AgentTool<any>> {
+	return hostFileAccess() ? { read: readTool, ls: lsTool, find: findTool, grep: grepTool } : {};
+}
+
+function withoutHostPdf(tools: Record<string, AgentTool<any>>): Record<string, AgentTool<any>> {
+	if (hostFileAccess()) return tools;
+	const { pdf: _hostPdf, ...rest } = tools;
+	return rest;
+}
 export type { ProbeDoneContext } from "./tools/probe.ts";
 
 /**
@@ -322,10 +343,8 @@ export function createProberTools(
 				// The learner-filesystem set is always-on (user-decided 2026-09,
 				// sources v1): the prober inspects and LOCATES learner-referenced
 				// files while assessing the edge. Read-only by construction.
-				read: readTool,
-				ls: lsTool,
-				find: findTool,
-				grep: grepTool,
+				// Accounts: the admin's only (fileTools below).
+				...fileTools(),
 				// Job dispatch in the probe phase (owner ruling, 2026-09-20):
 				// research + pdf are ALWAYS available in every phase — the
 				// prober can verify facts or read learner PDFs while assessing.
@@ -333,7 +352,7 @@ export function createProberTools(
 				// context). Same user-toggle filtering as the teacher; research
 				// remains available without a search-provider key.
 				...(jobs.research ? { research: jobs.research } : {}),
-				pdf: jobs.pdf!,
+				...(hostFileAccess() ? { pdf: jobs.pdf! } : {}),
 				// The map reader (wave 7): present only when the settings gate
 				// opened.
 				...(ctx.graphStore
@@ -452,13 +471,10 @@ export function createTeacherTools(
 			// The learner-filesystem set is always-on (user-decided 2026-09,
 			// sources v1): the teacher locates and reads learner-referenced
 			// files on its own terms — nothing auto-injects. Read-only by
-			// construction (fs-shared.ts).
-			read: readTool,
-			ls: lsTool,
-			find: findTool,
-			grep: grepTool,
+			// construction (fs-shared.ts). Accounts: the admin's only.
+			...fileTools(),
 			...planTools(ctx),
-			...jobTools({ chatId: ctx.chatId, jobStore: ctx.jobStore, spawn: ctx.spawn, searchAvailable: ctx.searchAvailable }),
+			...withoutHostPdf(jobTools({ chatId: ctx.chatId, jobStore: ctx.jobStore, spawn: ctx.spawn, searchAvailable: ctx.searchAvailable })),
 		},
 		withoutMechanics(enabled),
 		),

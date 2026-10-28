@@ -1,12 +1,14 @@
 "use client";
 
+import { ProjectProvider, useProject, useProjectPath, type ProjectInfo } from "@/components/project-route";
+import { apiFetch, apiUrlWithProject } from "@/components/api-fetch";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { MenuShell } from "@/components/menu-shell";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import type { ChatDeleteMode } from "@/src/core";
-import { DumbbellIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
+import { ArrowLeftIcon, DumbbellIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
 import { ActivitySection } from "@/components/activity-dock";
 import { CoverageMenuBlock } from "@/components/extraction-coverage";
 import { LhMark } from "@/components/lh-mark";
@@ -401,6 +403,8 @@ function SessionsSidebar() {
 	}, []);
 	const pathname = usePathname();
 	const router = useRouter();
+	const projectPath = useProjectPath();
+	const project = useProject();
 	const { open: openSettings } = useSettingsDialog();
 
 	/* New session (owner, 2026-09-13): NO POST — the button opens the
@@ -408,8 +412,8 @@ function SessionsSidebar() {
 	   message is sent (and that message becomes its title). Search: a
 	   client-side filter over the poll snapshot — no server round trip. */
 	const newSession = useCallback(() => {
-		router.push("/chat/new");
-	}, [router]);
+		router.push(projectPath("/chat/new"));
+	}, [router, projectPath]);
 
 	/* FUZZY (owner round 8, 2026-10-05): subsequence match ranked by
 	 * fuzzyScore — prefix beats word-boundary beats scattered. Empty query
@@ -437,7 +441,7 @@ function SessionsSidebar() {
 		if (refreshInFlightRef.current) return;
 		refreshInFlightRef.current = true;
 		try {
-			const res = await fetch("/api/chats", { cache: "no-store" });
+			const res = await apiFetch("/api/chats", { cache: "no-store" });
 			const d = (await res.json()) as { chats: ChatListItem[] };
 			setChats(d.chats);
 		} catch {
@@ -590,7 +594,7 @@ function SessionsSidebar() {
 		const t = next.trim();
 		if (t === "") return;
 		try {
-			const res = await fetch(`/api/chats/${id}`, {
+			const res = await apiFetch(`/api/chats/${id}`, {
 				method: "PUT",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ title: t }),
@@ -611,10 +615,10 @@ function SessionsSidebar() {
 		(id: string, _mode: ChatDeleteMode, graphRevision: number) => {
 			setDeleting(null);
 			setChats((prev) => (prev ? prev.filter((c) => c.id !== id) : prev));
-			if (pathname === `/chat/${id}`) router.push("/");
+			if (pathname === projectPath(`/chat/${id}`)) router.push(projectPath());
 			window.dispatchEvent(new CustomEvent("lh:graph-revision", { detail: { revision: graphRevision } }));
 		},
-		[pathname, router],
+		[pathname, router, projectPath],
 	);
 
 	useEffect(() => {
@@ -669,7 +673,7 @@ function SessionsSidebar() {
 						side="right"
 					>
 						<Link
-							href="/"
+							href={projectPath()}
 							aria-label="Home"
 							className="lh-no-drag flex size-9 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50"
 						>
@@ -689,6 +693,24 @@ function SessionsSidebar() {
 					</Hint>
 				</div>
 
+				{/* The open project (projects wave, owner 2026-10-28): its name,
+				    and the way back to the project list. */}
+				{project && (
+					<div data-testid="sidebar-project" className="mx-3 mb-2 flex min-w-0 items-center gap-1">
+						<Link
+							href="/"
+							title="Back to projects"
+							aria-label="Back to projects"
+							className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+						>
+							<ArrowLeftIcon className="size-3.5" />
+						</Link>
+						<span className="truncate text-sm font-medium text-foreground" title={project.name}>
+							{project.name}
+						</span>
+					</div>
+				)}
+
 				{/* Two doors, STACKED (owner round 8, 2026-10-05 — was a
 				    half/half row): full-width rows read cleaner and give the
 				    labels room; teaching keeps the original draft route,
@@ -707,7 +729,7 @@ function SessionsSidebar() {
 					<button
 						type="button"
 						data-testid="new-session-practice"
-						onClick={() => router.push("/chat/new?mode=practice")}
+						onClick={() => router.push(projectPath("/chat/new?mode=practice"))}
 						className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 					>
 						<DumbbellIcon className="size-3" />
@@ -763,7 +785,7 @@ function SessionsSidebar() {
 									const target = shown![kbdIndex !== null && kbdIndex < n ? kbdIndex : 0];
 									if (!target) return;
 									e.preventDefault();
-									router.push(`/chat/${target.id}`);
+									router.push(projectPath(`/chat/${target.id}`));
 									setKbdIndex(null);
 									e.currentTarget.blur();
 								}
@@ -823,11 +845,11 @@ function SessionsSidebar() {
 								<SessionRow
 									key={c.id}
 									chat={c}
-									active={pathname === `/chat/${c.id}`}
+									active={pathname === projectPath(`/chat/${c.id}`)}
 									kbdSelected={i === kbdIndex}
 									onOpen={() => {
 										setKbdIndex(null);
-										router.push(`/chat/${c.id}`);
+										router.push(projectPath(`/chat/${c.id}`));
 									}}
 									onContextMenu={(e) => openContext(e, c)}
 								/>
@@ -901,7 +923,7 @@ function SessionsSidebar() {
 								const chatId = ctxChatId;
 								setCtxChatId(null);
 								const a = document.createElement("a");
-								a.href = `/api/chats/${chatId}/markdown`;
+								a.href = apiUrlWithProject(`/api/chats/${chatId}/markdown`);
 								a.download = ""; // the route's filename wins
 								document.body.appendChild(a);
 								a.click();
@@ -943,12 +965,23 @@ function SessionsSidebar() {
 export function AppShell({ children }: { children: React.ReactNode }) {
 	return (
 		<SettingsDialogProvider>
-			<SessionsSidebar />
-			<main className="min-w-0 flex-1">{children}</main>
+			{children}
 			{/* The single document-level keydown listener (keyboard wave A) —
 			    after the content in the tree, but it's window-level so order only
 			    matters for the events it dispatches, never for DOM priority. */}
 			<KeyboardShortcuts />
 		</SettingsDialogProvider>
+	);
+}
+
+/** One project's frame (projects wave, owner 2026-10-28): the sessions
+ *  sidebar beside the page. Mounted by app/p/[project]/layout.tsx; the
+ *  project list (/) renders without it. */
+export function ProjectShell({ project, children }: { project: ProjectInfo; children: React.ReactNode }) {
+	return (
+		<ProjectProvider project={project}>
+			<SessionsSidebar />
+			<main className="min-w-0 flex-1">{children}</main>
+		</ProjectProvider>
 	);
 }

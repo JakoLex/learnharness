@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/components/api-fetch";
 import { useRef, useState } from "react";
 
 // Transport-only types: never import the server's extraction/agent module here.
@@ -40,7 +41,7 @@ export function parseNotesImportResults(body: unknown, files: readonly File[]): 
 export async function postNotesImport(files: readonly File[]): Promise<NotesImportResult[]> {
 	const form = new FormData();
 	for (const file of files) form.append("files", file);
-	const response = await fetch("/api/graph/import", { method: "POST", body: form });
+	const response = await apiFetch("/api/graph/import", { method: "POST", body: form });
 	let body: unknown;
 	try { body = await response.json(); }
 	catch { throw new Error("Invalid import response. Please retry the file."); }

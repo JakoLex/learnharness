@@ -3,7 +3,7 @@ import type { Usage } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type, type Static, type TSchema } from "typebox";
 import { toToolResult } from "../tool-execute.ts";
-import type { ModelRole } from "../../../config.ts";
+import { PATHS, type ModelRole } from "../../../config.ts";
 import {
 	FACTORY_SETTINGS,
 	ModelsNotConfiguredError,
@@ -813,10 +813,10 @@ interface LhExtractionGlobal {
 		lastStartedAt: number;
 	};
 	/** The serialized-audit mutex (owner 2026-09-28): a FIFO promise
-	 *  chain — the audit+merge critical section runs one job at a time,
-	 *  process-wide. globalThis for the same module-instance reason as
+	 *  chain per project graph — the audit+merge critical section runs one
+	 *  job at a time per graph. globalThis for the same module-instance reason as
 	 *  the run registries. */
-	__lhAuditLock?: { tail: Promise<void> };
+	__lhAuditLocks?: Map<string, { tail: Promise<void> }>;
 	/** The EXTRACT SEMAPHORE (owner, 2026-09-28): 3 concurrent extractor
 	 *  calls process-wide — the provider-facing rate stance (the import
 	 *  route's old 3-wide pool doctrine, now global). Per-chunk jobs fan
@@ -836,9 +836,24 @@ function runs(): NonNullable<LhExtractionGlobal["__lhExtractionRuns"]> {
 	return (g.__lhExtractionRuns ??= { running: new Map(), inFlight: new Set(), lastStartedAt: 0 });
 }
 
-/** In-flight pipeline runs (oldest first) — the /api/graph/status payload. */
+/** PER-GRAPH REGISTRY KEYS (projects wave, 2026-10-28): one process holds
+ *  many projects, and source ids are hashed from file NAMES — "notes.md"
+ *  imported into two projects is the same id. Every registry key is
+ *  prefixed with the scoped project's graph dir, and every reader filters
+ *  by it, so runs, the single-flight guard, aborts and the dock never
+ *  cross projects. */
+function graphKey(key: string): string {
+	return `${PATHS.graph}\u0000${key}`;
+}
+
+/** In-flight pipeline runs of the scoped project (oldest first) — the
+ *  /api/graph/status payload. */
 export function extractionStatuses(): RunningExtraction[] {
-	return [...runs().running.values()].sort((a, b) => a.startedAt - b.startedAt);
+	const prefix = graphKey("");
+	return [...runs().running.entries()]
+		.filter(([key]) => key.startsWith(prefix))
+		.map(([, run]) => run)
+		.sort((a, b) => a.startedAt - b.startedAt);
 }
 
 /** True cancellation of the in-flight run for a chat (the dock's abort
@@ -851,8 +866,9 @@ export function abortExtraction(chatId: string): boolean {
 	// entries (one per chunk/batch) — aborting the source aborts EVERY
 	// job of its fan-out.
 	let found = false;
-	for (const run of runs().running.values()) {
-		if (run.chatId !== chatId) continue;
+	const prefix = graphKey("");
+	for (const [key, run] of runs().running.entries()) {
+		if (!key.startsWith(prefix) || run.chatId !== chatId) continue;
 		run.controller.abort();
 		found = true;
 	}
@@ -991,8 +1007,18 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 	// THE SHARED REGISTRIES (runs() above — globalThis): every pipeline
 	// instance (route entries in dev, tests) sees the same runs, the same
 	// single-flight guard. No module-level state left in this factory.
-	const runningExtractions = runs().running;
-	const inFlight = runs().inFlight;
+	// Keyed per project graph (graphKey) — the facades keep every call site
+	// on its plain job/source key.
+	const runningExtractions = {
+		get: (key: string) => runs().running.get(graphKey(key)),
+		set: (key: string, run: RunningExtraction) => runs().running.set(graphKey(key), run),
+		delete: (key: string) => runs().running.delete(graphKey(key)),
+	};
+	const inFlight = {
+		has: (key: string) => runs().inFlight.has(graphKey(key)),
+		add: (key: string) => runs().inFlight.add(graphKey(key)),
+		delete: (key: string) => runs().inFlight.delete(graphKey(key)),
+	};
 
 	function setPhase(
 		jobKey: string,
@@ -1048,8 +1074,12 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 	 *  successors never hang). */
 	async function withAuditLock<T>(jobKey: string, kind: "chat" | "notes", label: string | undefined, critical: () => Promise<T>): Promise<T> {
 		setPhase(jobKey, "waiting", kind, label);
+		// One lock PER GRAPH (projects wave): audits of different projects
+		// never touch the same graph, so they need not wait on each other.
 		const g = globalThis as typeof globalThis & LhExtractionGlobal;
-		const lock = (g.__lhAuditLock ??= { tail: Promise.resolve() });
+		const locks = (g.__lhAuditLocks ??= new Map());
+		let lock = locks.get(PATHS.graph);
+		if (!lock) locks.set(PATHS.graph, (lock = { tail: Promise.resolve() }));
 		const prev = lock.tail;
 		let release!: () => void;
 		lock.tail = new Promise<void>((resolve) => (release = resolve));

@@ -35,8 +35,10 @@ const CAP_BYTES = 20 * 1024 * 1024;
 /** Test seam (the toolTimeoutMs idiom): shrink the cap to exercise it. */
 export const providerEventsCap = { current: CAP_BYTES };
 
-/** Test seam (the toolTimeoutMs idiom): redirect the output directory. */
-export const providerEventsDir = { current: path.join(PATHS.debug, "provider-events") };
+/** Test seam (the toolTimeoutMs idiom): redirect the output directory.
+ *  Unset = the scoped project's debug dir, resolved per write (projects
+ *  wave — never at module load, which runs outside any scope). */
+export const providerEventsDir: { current: string | undefined } = { current: undefined };
 
 /** The model shape the observer receives (structural — pi passes Model). */
 export interface ProviderEventModel {
@@ -53,7 +55,7 @@ function fileFor(chatId: string): string {
 	// chat ids are app-minted (chat_<base36>) — sanitize against any future
 	// id scheme putting path-hostile characters in here.
 	const safe = chatId.replace(/[^a-zA-Z0-9_-]/g, "_");
-	return path.join(providerEventsDir.current, `${safe}.jsonl`);
+	return path.join(providerEventsDir.current ?? path.join(PATHS.debug, "provider-events"), `${safe}.jsonl`);
 }
 
 function writeLine(file: string, line: Record<string, unknown>): void {

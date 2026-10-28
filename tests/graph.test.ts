@@ -27,7 +27,7 @@ import { deriveView, getGraph, graphSnapshot, mergeFindings, type GraphDeps } fr
 import { coverageSlots } from "../src/core/coverage.ts";
 import { graphStore } from "../src/store/graph.ts";
 import { chatStore } from "../src/store/chats.ts";
-import { LEDGER_FILES, PATHS, SOURCES_FILE } from "../config.ts";
+import { LEDGER_FILES, PATHS, sourcesFile } from "../config.ts";
 
 /** The wired fs adapters, exactly what src/server/stores.ts passes in production. */
 const graphDeps = { chatStore, graphStore } as const satisfies GraphDeps;
@@ -42,7 +42,9 @@ function sessionSource(chatId: string): { foldedAt: string } {
 
 // ─── ledger isolation (backup-and-clear of data/graph/*.jsonl) ──────────────
 
-const LEDGER_PATHS = [...Object.values(LEDGER_FILES), SOURCES_FILE];
+const LEDGER_PATHS = [...Object.values(LEDGER_FILES), sourcesFile()];
+/** The extraction registry keys entries per project graph (projects wave). */
+const regKey = (key: string) => `${PATHS.graph}\u0000${key}`;
 const backups: Array<{ file: string; bak: string }> = [];
 const createdChats: string[] = [];
 
@@ -952,7 +954,7 @@ describe("single-node deletion (deleteNodeTraces + deleteGraphNode, node interlu
 		const realRuns = g.__lhExtractionRuns;
 		g.__lhExtractionRuns = {
 			running: new Map([
-				["chat_busy", { chatId: "chat_busy", kind: "chat", phase: "extracting", startedAt: 1, usage: {}, controller: new AbortController() }],
+				[regKey("chat_busy"), { chatId: "chat_busy", kind: "chat", phase: "extracting", startedAt: 1, usage: {}, controller: new AbortController() }],
 			]),
 			inFlight: new Set(),
 			lastStartedAt: 0,
@@ -1034,8 +1036,8 @@ describe("session coverage read (extraction-UX redesign, 2026-09-24)", () => {
 			g.__lhExtractionRuns = {
 				running: new Map([
 					// a notes run for the same id is NOT this session's chat run
-					["src_notes", { chatId: "src_notes", kind: "notes", phase: "extracting", startedAt: 1, usage: {}, controller: new AbortController() }],
-					["other_chat", { chatId: "other_chat", kind: "chat", phase: "auditing", startedAt: 2, usage: {}, controller: new AbortController() }],
+					[regKey("src_notes"), { chatId: "src_notes", kind: "notes", phase: "extracting", startedAt: 1, usage: {}, controller: new AbortController() }],
+					[regKey("other_chat"), { chatId: "other_chat", kind: "chat", phase: "auditing", startedAt: 2, usage: {}, controller: new AbortController() }],
 				]),
 				inFlight: new Set(),
 				lastStartedAt: 0,
@@ -1043,7 +1045,7 @@ describe("session coverage read (extraction-UX redesign, 2026-09-24)", () => {
 			assert.equal(sessionCoverage(chat.id)!.running, false, "no chat-kind run for this id");
 			g.__lhExtractionRuns = {
 				running: new Map([
-					[chat.id, { chatId: chat.id, kind: "chat", phase: "extracting", startedAt: 3, usage: {}, controller: new AbortController() }],
+					[regKey(chat.id), { chatId: chat.id, kind: "chat", phase: "extracting", startedAt: 3, usage: {}, controller: new AbortController() }],
 				]),
 				inFlight: new Set(),
 				lastStartedAt: 0,

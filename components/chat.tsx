@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/components/api-fetch";
 import { createContext, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useChatSession } from "@/components/session";
 import { visibleQueuedSteers } from "@/components/session-core";
@@ -291,7 +292,7 @@ export function Chat({
 			const t = next.trim();
 			if (t === "" || t === titleText) return; // empty commit = discard
 			try {
-				const res = await fetch(`/api/chats/${chatId}`, {
+				const res = await apiFetch(`/api/chats/${chatId}`, {
 					method: "PUT",
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ title: t }),
@@ -353,7 +354,7 @@ export function Chat({
 	// abort's own onFinish. Inert when nothing runs (busyRef gate).
 	const abortInFlightTurn = useCallback(() => {
 		if (localStreamRef.current) stop();
-		void fetch("/api/activity/abort", {
+		void apiFetch("/api/activity/abort", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ kind: "turn", id: chatId }),
@@ -659,7 +660,7 @@ export function Chat({
 		// record refetch (the honest truth minus the refused send).
 		let cancelled = false;
 		void (async () => {
-			const res = await fetch(`/api/chats/${encodeURIComponent(chatId)}`);
+			const res = await apiFetch(`/api/chats/${encodeURIComponent(chatId)}`);
 			if (!cancelled && res.ok) {
 				const record = (await res.json().catch(() => null)) as { messages?: LhMessage[] } | null;
 				if (Array.isArray(record?.messages)) setMessages(record.messages);
@@ -802,7 +803,7 @@ export function Chat({
 	useEnterSubmits(sendNext);
 
 	const syncFromServer = useCallback(async () => {
-		const res = await fetch(`/api/chats/${chatId}`);
+		const res = await apiFetch(`/api/chats/${chatId}`);
 		if (!res.ok) return;
 		const record = (await res.json()) as { messages?: LhMessage[]; turns?: TurnUsage[]; pricing?: SessionPricing; turnError?: string };
 		if (Array.isArray(record.turns)) setTurns(record.turns);
@@ -841,7 +842,7 @@ export function Chat({
 	// full syncFromServer stays the net at idle (reorder, plan blocks, turns).
 	const adoptAppendOnly = useCallback(async () => {
 		try {
-			const res = await fetch(`/api/chats/${chatId}`);
+			const res = await apiFetch(`/api/chats/${chatId}`);
 			if (!res.ok) return;
 			const record = (await res.json()) as { messages?: LhMessage[] };
 			if (!Array.isArray(record.messages)) return;
@@ -953,7 +954,7 @@ export function Chat({
 	const [dockReserve, setDockReserve] = useState(208);
 	const syncTurns = useCallback(async () => {
 		try {
-			const res = await fetch(`/api/chats/${chatId}`);
+			const res = await apiFetch(`/api/chats/${chatId}`);
 			if (!res.ok) return;
 			const record = (await res.json()) as { turns?: TurnUsage[]; pricing?: SessionPricing; createdAt?: string };
 			if (Array.isArray(record.turns)) setTurns(record.turns);
@@ -1024,7 +1025,7 @@ export function Chat({
 		let cancelled = false;
 		void (async () => {
 			try {
-				const res = await fetch(`/api/chats/${chatId}`);
+				const res = await apiFetch(`/api/chats/${chatId}`);
 				if (!res.ok || cancelled) return;
 				const record = (await res.json()) as { turnInFlight?: boolean };
 				if (cancelled) return;
@@ -1076,7 +1077,7 @@ export function Chat({
 	const fetchJobsRef = useRef<() => void>(() => {});
 	const fetchJobs = useCallback(async () => {
 		try {
-			const res = await fetch(`/api/jobs?chatId=${encodeURIComponent(chatId)}`);
+			const res = await apiFetch(`/api/jobs?chatId=${encodeURIComponent(chatId)}`);
 			if (!res.ok) return;
 			const data = (await res.json()) as { jobs?: JobRecord[]; turnInFlight?: boolean };
 			const list = data.jobs ?? [];

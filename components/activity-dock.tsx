@@ -1,5 +1,7 @@
 "use client";
 
+import { useProjectPath } from "@/components/project-route";
+import { apiFetch } from "@/components/api-fetch";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIcon, BotIcon, FileTextIcon, PenToolIcon, PlayIcon, SearchIcon, SquareIcon, TriangleAlertIcon, WaypointsIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -108,7 +110,7 @@ export function ActivityProvider({ children }: { children: React.ReactNode }) {
 		let alive = true;
 		void (async () => {
 			try {
-				const res = await fetch("/api/activity");
+				const res = await apiFetch("/api/activity");
 				if (res.ok) {
 					const data = (await res.json()) as Partial<ActivityFeed>;
 					if (alive)
@@ -317,7 +319,7 @@ export function ActivitySection({ feed: feedProp }: { feed?: ActivityFeed }) {
 		const { setAbortStates: set } = abortRef.current;
 		set((s) => ({ ...s, [blob.id]: "pending" }));
 		try {
-			const res = await fetch("/api/activity/abort", {
+			const res = await apiFetch("/api/activity/abort", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({
@@ -416,6 +418,7 @@ function ActivityBlobRow({
 	abortState: AbortState | undefined;
 	onAbort: () => void;
 }) {
+	const projectPath = useProjectPath();
 	const Icon = blob.process === "extraction" ? WaypointsIcon : (blob.jobKind && KIND_ICON[blob.jobKind]) || BotIcon;
 	const label =
 		blob.process === "extraction"
@@ -514,7 +517,7 @@ function ActivityBlobRow({
 								<span className="tabular-nums text-card-foreground">{blob.steps}</span>
 							</div>
 						)}
-						<a href={`/chat/${blob.chatId}`} className="text-primary hover:underline">
+						<a href={projectPath(`/chat/${blob.chatId}`)} className="text-primary hover:underline">
 							Open session →
 						</a>
 					</div>
