@@ -23,8 +23,11 @@ export interface ModelFallbackNote {
 	/** The primary's error text; for a skipped primary, the error that
 	 *  marked it down. */
 	reason: string;
-	/** True when the primary was not tried because it is marked down. */
+	/** True when the primary was not tried (marked down, or busy). */
 	skipped: boolean;
+	/** Present when the primary's GPU was busy — the overflow, not a
+	 *  failure (overflow wave, owner 2026-10-28). */
+	busy?: true;
 }
 
 /** The fallback note of an assistant message, or undefined when its
@@ -35,13 +38,14 @@ export function modelFallbackOf(message: unknown): ModelFallbackNote | undefined
 	for (const entry of diagnostics) {
 		const d = entry as { type?: unknown; error?: { message?: unknown }; details?: Record<string, unknown> };
 		if (d?.type !== MODEL_FALLBACK_DIAGNOSTIC || !d.details) continue;
-		const { from, to, skipped } = d.details;
+		const { from, to, skipped, busy } = d.details;
 		if (typeof from !== "string" || typeof to !== "string") continue;
 		return {
 			from,
 			to,
 			reason: typeof d.error?.message === "string" ? d.error.message : "",
 			skipped: skipped === true,
+			...(busy === true ? { busy: true as const } : {}),
 		};
 	}
 	return undefined;

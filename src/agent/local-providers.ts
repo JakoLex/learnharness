@@ -74,6 +74,13 @@ export const LOCAL_PROVIDER_KEYS = [
 ] as const;
 
 const LLAMA_SWAP_URL = process.env.LH_LLAMA_SWAP_URL ?? "http://jakolexpc.fritz.box:8080/v1";
+
+/** The llama-swap provider id and base URL — the busy overflow asks its
+ *  /api/events (llama-swap-busy.ts). */
+export const LLAMA_SWAP_PROVIDER = "llama-swap";
+export function llamaSwapUrl(): string {
+	return LLAMA_SWAP_URL;
+}
 const SLOPGATE_URL = process.env.LH_SLOPGATE_URL ?? "http://jbkp.fritz.box:8081/v1";
 
 export function localProviders() {

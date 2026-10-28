@@ -10,6 +10,7 @@ import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-s
 import { emit } from "../core/events.ts";
 import { runUnscoped } from "../../config.ts";
 import { MODEL_FALLBACK_DIAGNOSTIC, MODEL_OUTAGE_MS, type ModelOutage } from "../core/model-fallback.ts";
+import type { BusyVerdict } from "./llama-swap-busy.ts";
 
 /**
  * THE FALLBACK STREAM (fallback wave, owner-approved 2026-10-28): wraps a
@@ -40,6 +41,15 @@ export interface FallbackSide {
 	/** Provider-qualified id ("provider:id"): the outage key and the note. */
 	key: string;
 	stream: StreamFunction;
+	/** BUSY OVERFLOW (overflow wave, owner 2026-10-28): asked before each
+	 *  call while the primary is not yet left; busy → wait up to `waitMs`
+	 *  (polling every `pollMs`), still busy → the fallback answers, and the
+	 *  rest of this engine's calls (one turn / job) stay there. */
+	overflow?: {
+		check: () => Promise<BusyVerdict>;
+		waitMs: number;
+		pollMs: number;
+	};
 }
 
 export interface FallbackTarget extends FallbackSide {
@@ -142,7 +152,7 @@ const CONTENT_EVENTS = new Set<AssistantMessageEvent["type"]>([
 	"toolcall_end",
 ]);
 
-function annotate(message: AssistantMessage, primary: string, fallback: string, reason: string, skipped: boolean): void {
+function annotate(message: AssistantMessage, primary: string, fallback: string, reason: string, skipped: boolean, busy: boolean): void {
 	if (message.diagnostics?.some((d) => d.type === MODEL_FALLBACK_DIAGNOSTIC)) return;
 	message.diagnostics = [
 		...(message.diagnostics ?? []),
@@ -150,22 +160,58 @@ function annotate(message: AssistantMessage, primary: string, fallback: string, 
 			type: MODEL_FALLBACK_DIAGNOSTIC,
 			timestamp: Date.now(),
 			error: { message: reason },
-			details: { from: primary, to: fallback, skipped },
+			details: { from: primary, to: fallback, skipped, ...(busy ? { busy: true } : {}) },
 		},
 	];
+}
+
+const sleep = (ms: number, signal?: AbortSignal) =>
+	new Promise<void>((resolve) => {
+		const timer = setTimeout(resolve, ms);
+		signal?.addEventListener("abort", () => {
+			clearTimeout(timer);
+			resolve();
+		}, { once: true });
+	});
+
+/** Ask until free, unreachable, aborted, or out of time (the owner's
+ *  15 s wait, 0.5 s polls). */
+async function waitWhileBusy(overflow: NonNullable<FallbackSide["overflow"]>, signal?: AbortSignal): Promise<BusyVerdict> {
+	const deadline = Date.now() + overflow.waitMs;
+	for (;;) {
+		const verdict = await overflow.check();
+		if (!verdict.busy || verdict.unreachable || signal?.aborted || Date.now() + overflow.pollMs > deadline) return verdict;
+		await sleep(overflow.pollMs, signal);
+	}
 }
 
 /** The primary stream, answered by `fallback` when it fails before its
  *  first token (see the module doc for the rules). */
 export function withModelFallback(primary: FallbackSide, fallback: FallbackTarget): StreamFunction {
+	// Once a busy primary was left, this engine (one turn / one job) stays
+	// on the fallback — no model switch inside an answer (owner, 2026-10-28).
+	let leftBusy: string | undefined;
 	return (requestModel, context, options) => {
 		const out = new AssistantMessageEventStream();
 		void (async () => {
 			let reason = "";
-			const down = modelDown(primary.key);
+			let busy = false;
+			let down = modelDown(primary.key);
 			try {
+				if (!down && !leftBusy && primary.overflow && !options?.signal?.aborted) {
+					const verdict = await waitWhileBusy(primary.overflow, options?.signal);
+					if (verdict.unreachable) {
+						markModelDown(primary.key, verdict.reason ?? "unreachable");
+						down = modelDown(primary.key);
+					} else if (verdict.busy && !options?.signal?.aborted) {
+						leftBusy = verdict.reason ?? "busy";
+					}
+				}
 				if (down) {
 					reason = down.reason;
+				} else if (leftBusy) {
+					reason = leftBusy;
+					busy = true;
 				} else {
 					let held: AssistantMessageEvent[] = [];
 					let failed: AssistantMessage | undefined;
@@ -199,18 +245,18 @@ export function withModelFallback(primary: FallbackSide, fallback: FallbackTarge
 				// The fallback answers the very same request: its own model and
 				// thinking (the fallback stream pins its level), never the
 				// primary's resolved key.
-				const skipped = down !== undefined;
+				const skipped = down !== undefined || busy;
 				for await (const event of fallback.stream(fallback.model, context, { ...options, apiKey: undefined })) {
 					if (event.type === "start" || CONTENT_EVENTS.has(event.type)) {
-						annotate((event as { partial: AssistantMessage }).partial, primary.key, fallback.key, reason, skipped);
+						annotate((event as { partial: AssistantMessage }).partial, primary.key, fallback.key, reason, skipped, busy);
 					} else if (event.type === "done") {
-						annotate(event.message, primary.key, fallback.key, reason, skipped);
+						annotate(event.message, primary.key, fallback.key, reason, skipped, busy);
 						servedUsage.set(event.message.usage, fallback.key);
 					} else if (event.type === "error") {
-						annotate(event.error, primary.key, fallback.key, reason, skipped);
+						annotate(event.error, primary.key, fallback.key, reason, skipped, busy);
 						servedUsage.set(event.error.usage, fallback.key);
 						if (event.reason === "error") {
-							event.error.errorMessage = `${primary.key} failed: ${reason}\nFallback ${fallback.key} failed: ${event.error.errorMessage ?? "unknown error"}`;
+							event.error.errorMessage = `${primary.key} ${busy ? "was busy" : "failed"}: ${reason}\nFallback ${fallback.key} failed: ${event.error.errorMessage ?? "unknown error"}`;
 						}
 					}
 					out.push(event);

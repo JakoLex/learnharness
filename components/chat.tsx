@@ -1599,7 +1599,7 @@ export function Chat({
 														const note = part.data as ModelFallbackNote;
 														return (
 															<p key={pi} data-testid="model-fallback-note" title={note.reason} className="mb-2 text-xs text-muted-foreground">
-																via {prettyModel(note.to)} — {prettyModel(note.from)} unavailable
+																via {prettyModel(note.to)} — {prettyModel(note.from)} {note.busy ? "busy" : "unavailable"}
 															</p>
 														);
 													}

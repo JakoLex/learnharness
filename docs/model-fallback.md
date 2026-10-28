@@ -19,6 +19,19 @@ One wrapper around the stream function of the one engine factory (`piEngineForSp
 - **Both fail:** the error names both (`<primary> failed: … / Fallback <fallback> failed: …`) and the usual Retry applies.
 - **Key gates:** a turn, job or extraction stage whose primary key is missing still runs when its fallback's key is present.
 
+## Busy overflow (llama-swap)
+
+Owner-approved 2026-10-28. This mirrors the owner's Open WebUI filter `gpu_overflow`. A primary on the `llama-swap` provider with a slot fallback first asks whether the GPU is taken (`src/agent/llama-swap-busy.ts`):
+
+- **How it asks:** `GET <llama-swap>/api/events` (SSE), read until the first `inflight` snapshot, with a 2 s budget.
+- **Busy rule:**
+  - Any GPU request in flight means busy. Requests on CPU models (`LH_LLAMA_SWAP_CPU_MODELS`, comma list) don't count.
+  - A parallel model (`LH_LLAMA_SWAP_PARALLEL_MODELS`) stays free while only it runs.
+  - An unreachable or silent host is left at once and marked down for 5 minutes, like a failure.
+- **Waiting:** while busy, it polls every 0.5 s for up to 15 s. Free in time means the GPU answers. Still busy means the slot's fallback answers. The rest of that turn or job stays on the fallback: no new check, no model switch mid-answer.
+- **Scope:** chats and all background work (extraction, jobs, compaction). LearnHarness's own in-flight requests count as busy, too.
+- **Display:** the transcript note reads "via ‹fallback› — ‹primary› busy". Busy is not an outage, so it gets no dock entry. Usage bills to the fallback.
+
 ## Presentation and accounting
 
 - The answering message carries a `lh.model_fallback` entry in pi's native `diagnostics` (persisted with the record, never sent to a provider). The transcript shows "via ‹fallback› — ‹primary› unavailable" once per assistant group; the primary's error is the tooltip.

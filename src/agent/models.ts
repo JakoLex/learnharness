@@ -13,7 +13,8 @@ import { type ModelRole } from "../../config.ts";
 import { DEFAULT_THINKING_ORDER } from "../core/settings.ts";
 import packageMetadata from "../../package.json" with { type: "json" };
 import { chatGPTModel } from "./chatgpt-bridge.ts";
-import { localProviders } from "./local-providers.ts";
+import { LLAMA_SWAP_PROVIDER, llamaSwapUrl, localProviders } from "./local-providers.ts";
+import { llamaSwapBusy, llamaSwapOverflowSetup } from "./llama-swap-busy.ts";
 import { chatGPTStream } from "./chatgpt-stream.ts";
 import type { ChatGPTDispatchLifecycle } from "./chatgpt-request-cycle.ts";
 import { nativeSubscriptionId, nativeSubscriptionModel } from "./subscription-bridge.ts";
@@ -143,7 +144,16 @@ export function piEngineForSpec(spec: ResolvedModelSpec, background: boolean | (
 		level,
 		fallback: { model: fallbackModel, level: fallbackLevel },
 		streamFn: withModelFallback(
-			{ key: `${model.provider}:${model.id}`, stream: primary },
+			{
+				key: `${model.provider}:${model.id}`,
+				stream: primary,
+				// BUSY OVERFLOW (overflow wave, owner 2026-10-28): a llama-swap
+				// primary first asks whether the GPU is taken (the owner's OWUI
+				// gpu_overflow rule) and waits up to 15 s before leaving.
+				...(model.provider === LLAMA_SWAP_PROVIDER
+					? { overflow: { check: () => llamaSwapBusy(model.id, llamaSwapOverflowSetup(llamaSwapUrl())), waitMs: OVERFLOW_WAIT_MS, pollMs: OVERFLOW_POLL_MS } }
+					: {}),
+			},
 			{
 				key: `${fallbackModel.provider}:${fallbackModel.id}`,
 				model: fallbackModel,
@@ -153,6 +163,10 @@ export function piEngineForSpec(spec: ResolvedModelSpec, background: boolean | (
 		),
 	};
 }
+
+/** The overflow's patience (the owner's OWUI filter): 15 s, polled each 0.5 s. */
+const OVERFLOW_WAIT_MS = 15_000;
+const OVERFLOW_POLL_MS = 500;
 
 /** UNSET level → the baked default order (first entry the model supports);
  *  SET level → pi's native nearest-clamp (model swaps keep the user's
