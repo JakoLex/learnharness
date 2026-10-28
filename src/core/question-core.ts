@@ -468,6 +468,14 @@ export interface QuestionAnswerData {
 	committed?: string; // explain only (rendering): the model's committed answer
 	explanation?: string; // quiz only (rendering)
 	dismissed?: boolean;
+	/** Ask-the-tutor deferral (2026-10-28): the learner parked this
+	 *  teach-phase check to ask the tutor first — his message follows the
+	 *  result in the same turn, and the tutor re-poses the check. Not an
+	 *  answer: no verdict, no evidence either way. */
+	deferred?: boolean;
+	/** deferred only: he had already opened the check (saw the question)
+	 *  when he asked. */
+	opened?: boolean;
 	answeredAt: string;
 }
 
@@ -776,8 +784,25 @@ export function dismissedAnswer(kind: QuestionKind, questionText: string): Quest
 	};
 }
 
+/** The deferral record (ask the tutor first, 2026-10-28): like a
+ *  dismissal, the minimum honest result — the learner's question rides
+ *  as the user message right after it. `opened` = he had already seen
+ *  the question. */
+export function deferredAnswer(kind: QuestionKind, questionText: string, opened: boolean): QuestionAnswerData {
+	return {
+		kind,
+		questionText,
+		dontKnow: false,
+		answers: [],
+		deferred: true,
+		...(opened ? { opened: true } : {}),
+		answeredAt: new Date().toISOString(),
+	};
+}
+
 export function compactAnswerForModel(ad: QuestionAnswerData): Record<string, unknown> {
 	if (ad.dismissed) return { kind: ad.kind, dismissed: true };
+	if (ad.deferred) return { kind: ad.kind, deferred: true, ...(ad.opened ? { opened: true } : {}) };
 	const out: Record<string, unknown> = { kind: ad.kind };
 	if (ad.dontKnow) out.dontKnow = true;
 	// Array.isArray: the seam is called with `unknown` answers (test

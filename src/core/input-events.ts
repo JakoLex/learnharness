@@ -47,6 +47,10 @@ import { QUESTION_TOOLS, toolQuestionKind } from "./pending.ts";
 export type ChatInput =
 	| { type: "text"; text: string }
 	| { type: "answer"; toolCallId: string; answer: QuestionAnswerData }
+	/** Ask the tutor first (2026-10-28): park the pending teach-phase check
+	 *  (its deferral result) and send the learner's message — both append
+	 *  in ONE turn, result first, so the call/result adjacency holds. */
+	| { type: "defer"; toolCallId: string; answer: QuestionAnswerData; text: string }
 	| { type: "continue" }
 	/** The failed-turn retry (issue #110): the banner's Retry button. */
 	| { type: "retry" }
@@ -173,6 +177,19 @@ export function parseChatInput(input: unknown): ChatInput {
 				throw new ChatInputError("answer input requires the graded answer object");
 			}
 			return { type: "answer", toolCallId: i.toolCallId, answer: i.answer as QuestionAnswerData };
+		case "defer": {
+			if (typeof i.toolCallId !== "string" || i.toolCallId.length === 0) {
+				throw new ChatInputError("defer input requires toolCallId");
+			}
+			const answer = i.answer as QuestionAnswerData | undefined;
+			if (typeof answer !== "object" || answer === null || answer.deferred !== true) {
+				throw new ChatInputError("defer input's answer must be a deferral (deferred: true)");
+			}
+			if (typeof i.text !== "string" || i.text.trim().length === 0) {
+				throw new ChatInputError("defer input requires non-empty text");
+			}
+			return { type: "defer", toolCallId: i.toolCallId, answer, text: i.text };
+		}
 		case "continue":
 			return { type: "continue" };
 		case "retry":
@@ -214,6 +231,23 @@ export function inputAppends(
 				throw new ChatInputError("answer input targets no pending question call");
 			}
 			return [newAnswerResult(input.toolCallId, pending.tool, input.answer)];
+		}
+		case "defer": {
+			// Same orphan discipline as answers, plus: the deferred call must be
+			// the ONLY dangling question — the message that follows would
+			// otherwise strand a sibling call without its adjacent result.
+			const pending = danglingQuestionOf(record.messages);
+			if (!pending || pending.toolCallId !== input.toolCallId) {
+				throw new ChatInputError("defer input targets no pending question call");
+			}
+			if (input.answer.kind !== toolQuestionKind(pending.tool)) {
+				throw new ChatInputError("defer input's answer kind does not match the question");
+			}
+			const result = newAnswerResult(input.toolCallId, pending.tool, input.answer);
+			if (danglingQuestionOf([...record.messages, result]) !== null) {
+				throw new ChatInputError("defer input leaves another question dangling");
+			}
+			return [result, newUserMessage(input.text)];
 		}
 		case "continue":
 			return dismissalConclusion(record);

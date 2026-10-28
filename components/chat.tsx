@@ -70,8 +70,11 @@ import { CoverageRing } from "@/components/extraction-coverage";
 import { Button } from "@/components/ui/button";
 import {
 	activeProblemOf,
+	danglingQuestionOf,
+	deferredAnswer,
 	dismissedAnswer,
 	endsInFailedTurn,
+	newAnswerResult,
 	findPendingToolCall,
 	phaseAt3,
 	phaseTimeline,
@@ -252,7 +255,7 @@ export function Chat({
 	// (core/view.ts projectView); sends are ONE explicit input event each
 	// ({chatId, input} — the stash indirection died with the SDK), and the
 	// turn stream is the VERBATIM AgentEvent passthrough the server emits.
-	const { messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, setMessages, adoptRecord, status, error, stop, clearError, resumeStream, setReattachSettled } =
+	const { messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, deferQuestion, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, setMessages, adoptRecord, status, error, stop, clearError, resumeStream, setReattachSettled } =
 		useChatSession({ chatId, initialMessages, initialError, initiallyInFlight });
 
 	const sessionFindScopeRef = useRef<HTMLDivElement | null>(null);
@@ -734,6 +737,28 @@ export function Chat({
 	// server's registry mutex is the structural gate; this is the
 	// affordance).
 	const [compacting, setCompacting] = useState(initiallyCompacting);
+	// ASK THE TUTOR FIRST (owner, 2026-10-28): the pending check's field
+	// sends its text as the learner's message and parks the check (the
+	// deferral result) — one turn; the tutor answers, then re-poses the
+	// check. Offered only when idle and when this check is the ONLY
+	// dangling question (the server 400s otherwise — a sibling call would
+	// lose its adjacent result). A refused/failed send restores the text.
+	const askTutorAvailable = useMemo(() => {
+		if (!pending || busy || compacting || status !== "ready") return false;
+		return danglingQuestionOf([...nativeMessages, newAnswerResult(pending.toolCallId, pending.tool, {})]) === null;
+	}, [pending, busy, compacting, status, nativeMessages]);
+	const askTutor = useCallback(
+		async (opened: boolean) => {
+			const p = pendingRef.current;
+			const text = readingThinkingRef.current.trim();
+			if (!p || !text) return;
+			const question = (p.input as { question?: string } | null)?.question ?? "";
+			clearReadingThinking();
+			const ok = await deferQuestion(p.toolCallId, deferredAnswer(toolQuestionKind(p.tool), question, opened), text);
+			if (!ok && !readingThinkingRef.current) applyReadingThinking(text);
+		},
+		[deferQuestion, clearReadingThinking, applyReadingThinking],
+	);
 	// A failed model response (issue #110): Retry keeps the saved input
 	// and completed work, without another learner message. Offered from
 	// "error" too: a dropped stream leaves the model there, and send()
@@ -1690,6 +1715,7 @@ export function Chat({
 					requiresReveal={requiresReveal}
 					readingThinking={readingThinking}
 					onReadingThinking={applyReadingThinking}
+					onAskTutor={askTutorAvailable ? askTutor : undefined}
 					phase={phases.at(-1) ?? "probe"}
 					turns={turns}
 					contextTokens={contextTokens}
@@ -1918,6 +1944,7 @@ function DockOverlay({
 	requiresReveal,
 	readingThinking,
 	onReadingThinking,
+	onAskTutor,
 	phase,
 	turns,
 	contextTokens,
@@ -1954,6 +1981,10 @@ function DockOverlay({
 	 *  the submit + dismissal seams (outside this overlay) can merge it. */
 	readingThinking: string;
 	onReadingThinking: (v: string) => void;
+	/** Ask the tutor first (2026-10-28): park the check and send the field's
+	 *  text; `opened` = the learner had revealed the check. Absent = not
+	 *  possible right now (busy, compacting, a sibling question). */
+	onAskTutor?: (opened: boolean) => void;
 	/** Session phase at the pending question — scales the thinking field. */
 	phase: Phase3;
 	/** The session's usage log — the stats bar beneath the composer folds it. */
@@ -2347,10 +2378,12 @@ function DockOverlay({
 					    rounding starts, truncated, no background, no container. A
 					    line dies when its card lands (visibleQueuedSteers). */}
 					<QueuedSteersBody steers={queuedSteers} />
-					{/* The reading-thinking field (owner 2026-10-03): mounted while a
-					    teach-phase check waits — the same cue that collapses it. It
-					    claims dictated speech until the learner reveals the check
-					    (the dock reclaims then). Rides the check answer on submit. */}
+					{/* The ask-the-tutor field (owner 2026-10-28; the reading-thinking
+					    field of 2026-10-03): mounted while a teach-phase check waits
+					    — the same cue that collapses it. Enter with text parks the
+					    check and asks the tutor; unsent text rides the check answer.
+					    It claims dictated speech until the learner reveals the check
+					    (the dock reclaims then). */}
 					{pending && requiresReveal && (
 						<ReadingThinkingField
 							value={readingThinking}
@@ -2362,6 +2395,15 @@ function DockOverlay({
 											void finishDictation().then(() => {
 												expandAndRevealRef.current();
 											});
+										}
+									: undefined
+							}
+							onAsk={
+								onAskTutor
+									? () => {
+											// The dictation flush lands in the field first, so
+											// spoken words ride the question.
+											void finishDictation().then(() => onAskTutor(!revealPending));
 										}
 									: undefined
 							}

@@ -6,7 +6,7 @@ import { parseAskInput, parseExplainInput, parseQuizInput } from "./tool-parts.t
 import { repairMathForDisplay } from "./math-delims.ts";
 
 export function answerForPresentation(answer: QuestionAnswerData, input: unknown): QuestionAnswerData {
-	if (answer.dismissed) return answer;
+	if (answer.dismissed || answer.deferred) return answer;
 	const quiz = answer.kind === "quiz" ? parseQuizInput(input) : undefined;
 	const explain = answer.kind === "explain" ? parseExplainInput(input) : undefined;
 	const source = quiz ?? explain ?? (answer.kind === "ask" ? parseAskInput(input) : undefined);

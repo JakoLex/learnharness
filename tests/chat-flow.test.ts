@@ -36,7 +36,7 @@ import { buildSubagentSteer } from "../src/core/contracts.ts";
 import { abortTurn, runningTurn, settledTurnResponse } from "../src/server/turn-runs.ts";
 import { chatStore } from "../src/store/chats.ts";
 import { jobStore } from "../src/store/jobs.ts";
-import { buildAnswer, dismissedAnswer, normalizeOptions, resolveCorrect, type QuestionData } from "../src/core/question-core.ts";
+import { buildAnswer, deferredAnswer, dismissedAnswer, normalizeOptions, resolveCorrect, type QuestionData } from "../src/core/question-core.ts";
 import { danglingQuestionOf, endsInDismissal, needsContinuation, newAnswerResult, newUserMessage } from "../src/core/native-messages.ts";
 import { projectView } from "../src/core/view.ts";
 import { contextComposition, type ContextComposition } from "../src/core/context-composition.ts";
@@ -965,6 +965,47 @@ describe("canonical persistence failures", () => {
 		assert.ok(recorded.definitions > 0, "and the tool declarations");
 		assert.ok(recorded.text > 0, "the learner's message");
 		assert.equal(recorded.reasoning, 0, "this call's own reply is not part of its request");
+	});
+
+	it("ask the tutor first: the check parks, his message follows in ONE turn, the tutor re-poses (owner, 2026-10-28)", async () => {
+		const seen: { role: string; content: unknown }[][] = [];
+		const { engine } = scriptedTeacher(() => [
+			() => fauxAssistantMessage([fauxText("Mercury orbits closest."), fauxToolCall("quiz", QUIZ_INPUT, { id: "call-1" })], { stopReason: "toolUse" }),
+			(context) => {
+				seen.push(context.messages.map((m) => ({ role: m.role, content: (m as { content: unknown }).content })));
+				return fauxAssistantMessage([fauxText("Venus is hotter because of its atmosphere."), fauxToolCall("quiz", QUIZ_INPUT, { id: "call-2" })], { stopReason: "toolUse" });
+			},
+		]);
+		const chat = createConfiguredChat("Test: ask the tutor first");
+		createdChats.push(chat.id);
+		await drainTurn(post(chat.id, { type: "text", text: "teach me the solar system" }), agentFactory(engine));
+		assert.equal(danglingQuestionOf(chatStore.getChat(chat.id)!.messages)?.toolCallId, "call-1");
+
+		await drainTurn(
+			post(chat.id, { type: "defer", toolCallId: "call-1", answer: deferredAnswer("quiz", QUIZ_INPUT.question, false), text: "Why is Venus hotter, then?" }),
+			agentFactory(engine),
+		);
+		const messages = chatStore.getChat(chat.id)!.messages;
+		assert.deepEqual(messages.map((m) => m.role), ["user", "assistant", "toolResult", "user", "assistant"]);
+		assert.equal((messages[2] as { details?: { deferred?: boolean } }).details?.deferred, true);
+		assert.equal(messages[3]!.content, "Why is Venus hotter, then?");
+		// The provider received the parked result, then his message, adjacent.
+		const sent = seen[0]!.filter((m) => m.role !== "system");
+		assert.deepEqual(sent.slice(-2).map((m) => m.role), ["toolResult", "user"]);
+		assert.equal((sent.at(-2)!.content as { text: string }[])[0]!.text, JSON.stringify({ kind: "quiz", deferred: true }));
+		// The re-posed check owns the dock again.
+		assert.equal(danglingQuestionOf(messages)?.toolCallId, "call-2");
+	});
+
+	it("a defer that targets no pending check is refused honestly (400)", async () => {
+		const chat = createConfiguredChat("Test: stray defer");
+		createdChats.push(chat.id);
+		const { engine } = scriptedTeacher(() => []);
+		const res = await handleChatRequest(
+			post(chat.id, { type: "defer", toolCallId: "call-none", answer: deferredAnswer("quiz", "Q?", false), text: "Why?" }),
+			agentFactory(engine),
+		);
+		assert.equal(res.status, 400);
 	});
 });
 

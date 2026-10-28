@@ -110,6 +110,10 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 			void model.submitAnswer(tool, toolCallId, output),
 		[model],
 	);
+	const deferQuestion = useCallback(
+		(toolCallId: string, answer: QuestionAnswerData, text: string) => model.deferQuestion(toolCallId, answer, text),
+		[model],
+	);
 	const dismissQuestion = useCallback(
 		(toolCallId: string, answer: QuestionAnswerData) => void model.dismissQuestion(toolCallId, answer),
 		[model],
@@ -138,6 +142,7 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 		continueIfOwed,
 		steer,
 		submitAnswer,
+		deferQuestion,
 		dismissQuestion,
 		dismissProblem,
 		questionDraft,

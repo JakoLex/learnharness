@@ -653,7 +653,7 @@ export class SessionModel {
 		this.latestRequest = controller;
 		this.setError(null);
 		this.setStatus("submitted");
-		if (recovering && input.type === "answer") {
+		if (recovering && (input.type === "answer" || input.type === "defer")) {
 			try {
 				const res = await this.fetch(`/api/chats/${encodeURIComponent(this.chatId)}`, { signal: controller.signal });
 				if (this.consumeAbort !== controller) return false;
@@ -668,7 +668,7 @@ export class SessionModel {
 					await this.resumeStream(false);
 					return false;
 				}
-				if (input.type === "answer" && (answeredCallIds(record.messages).has(input.toolCallId) || danglingQuestionOf(record.messages)?.toolCallId !== input.toolCallId)) {
+				if ((input.type === "answer" || input.type === "defer") && (answeredCallIds(record.messages).has(input.toolCallId) || danglingQuestionOf(record.messages)?.toolCallId !== input.toolCallId)) {
 					// The call already resolved, or no longer owns the dock. Adopt
 					// truth, never POST that answer a second time.
 					this.setStatus("ready");
@@ -696,11 +696,14 @@ export class SessionModel {
 			// The move-on signal (owner round 16): the NEXT PROBLEM line
 			// renders the instant the chip/Enter fires.
 			optimistic.push({ ...newNextMessage(), id: localId() });
-		} else if (input.type === "answer") {
+		} else if (input.type === "answer" || input.type === "defer") {
 			const tool = pendingCallTool([...this.base, ...this.tail], input.toolCallId) ?? "quiz";
 			const result = { ...newAnswerResult(input.toolCallId, tool, input.answer), id: localId() };
 			optimistic.push(result);
 			this.unconfirmedAnswers.set(result.id, input.toolCallId);
+			// Ask the tutor first: the parked check's result, then his message —
+			// the same order the server's write-ahead persists.
+			if (input.type === "defer") optimistic.push({ ...newUserMessage(input.text), id: localId() });
 		}
 		if (optimistic.length > 0) this.mutate(() => {
 			this.tail = [...this.tail, ...optimistic];
@@ -768,7 +771,7 @@ export class SessionModel {
 			// existing setup recovery. A newer send/reattach ALWAYS owns errors
 			// and status instead, even if that request has since been stopped.
 			// Ordinary text and answer teardown behavior stays unchanged.
-			if (input.type === "answer") {
+			if (input.type === "answer" || input.type === "defer") {
 				const ids = new Set(optimistic.map(m => m.id));
 				this.mutate(() => {
 					this.tail = this.tail.filter(m => !ids.has(m.id));
@@ -831,6 +834,14 @@ export class SessionModel {
 	submitAnswer(tool: string, toolCallId: string, output: QuestionAnswerData): Promise<void> {
 		void tool;
 		return this.send({ type: "answer", toolCallId, answer: output }).then(() => undefined);
+	}
+
+	/** Ask the tutor first (2026-10-28): park the pending check and send
+	 *  the learner's message — one input event, one turn. Resolves true
+	 *  only when the POST was acknowledged (the caller restores the text
+	 *  otherwise — nothing gets lost). */
+	deferQuestion(toolCallId: string, answer: QuestionAnswerData, text: string): Promise<boolean> {
+		return this.send({ type: "defer", toolCallId, answer, text });
 	}
 
 	/** The dismissal path (owner design 2026-10-03, "A2"): the skipped

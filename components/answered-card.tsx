@@ -29,6 +29,15 @@ export function AnsweredCard({ answer: savedAnswer, input }: { answer: QuestionA
 			</div>
 		);
 	}
+	// Ask the tutor first (2026-10-28): the parked check — no verdict, no
+	// solution; the learner's question follows as his own message.
+	if (answer.deferred) {
+		return (
+			<div data-testid="deferred-card" className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">
+				<span className="font-medium">{answer.questionText}</span> — asked the tutor first
+			</div>
+		);
+	}
 
 	const isQuiz = answer.kind === "quiz";
 	const isExplain = answer.kind === "explain";
