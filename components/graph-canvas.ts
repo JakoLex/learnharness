@@ -515,14 +515,20 @@ export function pickNearest<T extends { id: string; x: number; y: number }>(
  *  quiet enough to sit behind the arguments (owner, 2026-10-27: "weniger
  *  grell"). */
 export const BRIDGE_COLOR = "#c8b48c";
-/** Bridge-curve opacity: zoomed out → zoomed in, and when hovered. */
+/** A bridge with a node on screen draws like the normal edges: full
+ *  opacity at every zoom (owner, 2026-10-28: "ähnlich wie die normalen
+ *  Verbindungen"); hovered ones too (they also draw thicker). */
+const BRIDGE_ALPHA_SHOWN = 1;
+const BRIDGE_ALPHA_HOVER = 1;
+/** The quiet zoom ramp (zoomed out → zoomed in) that every bridge had
+ *  before; DETACHED bridges keep BRIDGE_DETACHED_SHARE of it. */
 const BRIDGE_ALPHA_OUT = 0.12;
 const BRIDGE_ALPHA_IN = 0.45;
-const BRIDGE_ALPHA_HOVER = 0.9;
 /** A bridge none of whose nodes is on screen draws at this share of the
- *  normal bridge opacity (owner, 2026-10-28: long curves crossing the view
- *  from off-screen nodes stay out of the way; hover still shows them full). */
-export const BRIDGE_DETACHED_SHARE = 0.25;
+ *  quiet ramp — 1.5 % zoomed out → 5.6 % zoomed in (owner, 2026-10-28:
+ *  long curves crossing the view from off-screen nodes stay out of the
+ *  way, halved again the same day; hover still shows them full). */
+export const BRIDGE_DETACHED_SHARE = 0.125;
 /** How far a bridge curve bows out, as a share of its chord. */
 export const BRIDGE_BEND = 0.18;
 /** Hit-test distance for hovering a bridge, screen px. */
@@ -2080,8 +2086,9 @@ export class GraphCanvasRenderer {
 
 		// 3b. Fork (2026-10-27): cross-source bridges. Zoomed out, one soft
 		// band per pair of sources — a light shadow that flares into both
-		// clusters (owner sketch) — carries the overview and the single
-		// curves stay faint; zoomed in, the curves take over. The hovered
+		// clusters (owner sketch) — runs beneath the curves. A curve with a
+		// node on screen draws at full opacity like the edges; one that only
+		// crosses the view stays faint (owner, 2026-10-28). The hovered
 		// bridge draws solid and thicker (its card is drawn last, step 9).
 		if (settings.bridges && this.bridgeHits.length > 0) {
 			const color = data.colors.bridge ?? BRIDGE_COLOR;
@@ -2117,9 +2124,10 @@ export class GraphCanvasRenderer {
 			// In view or DETACHED (owner, 2026-10-28): a bridge none of whose
 			// nodes is on screen draws at BRIDGE_DETACHED_SHARE of the alpha.
 			const view = worldView(this.transform, w, h);
+			const detachedAlpha = BRIDGE_DETACHED_SHARE * (BRIDGE_ALPHA_OUT + (BRIDGE_ALPHA_IN - BRIDGE_ALPHA_OUT) * nodeAlpha);
 			const groups = [
-				{ share: 1, shafts: new Path2D(), shared: new Path2D(), heads: new Path2D() },
-				{ share: BRIDGE_DETACHED_SHARE, shafts: new Path2D(), shared: new Path2D(), heads: new Path2D() },
+				{ alpha: BRIDGE_ALPHA_SHOWN, shafts: new Path2D(), shared: new Path2D(), heads: new Path2D() },
+				{ alpha: detachedAlpha, shafts: new Path2D(), shared: new Path2D(), heads: new Path2D() },
 			];
 			for (const part of this.bridgeParts) {
 				const group = groups[anyInView(part.nodes, view, this.world.nodeR) ? 0 : 1]!;
@@ -2127,9 +2135,8 @@ export class GraphCanvasRenderer {
 				group.shared.addPath(part.shared);
 				group.heads.addPath(part.heads);
 			}
-			const baseAlpha = BRIDGE_ALPHA_OUT + (BRIDGE_ALPHA_IN - BRIDGE_ALPHA_OUT) * nodeAlpha;
 			for (const group of groups) {
-				ctx.globalAlpha = baseAlpha * group.share;
+				ctx.globalAlpha = group.alpha;
 				ctx.lineCap = dashCap;
 				ctx.setLineDash([6 / k, 4 / k]);
 				ctx.stroke(group.shafts);
