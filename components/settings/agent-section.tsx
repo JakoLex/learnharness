@@ -321,6 +321,7 @@ function SlotFallbackRow({
 							models={choices}
 							effectiveId={modelId}
 							effectiveProvider={provider}
+							vision={slot === "vision"}
 							onPick={(entry) => {
 								const next = populateLevel(thinking || undefined, entry.supportedLevels);
 								onModelsChange(composeSlotFallback(models, slot, entry.provider, entry.id, next));
@@ -737,9 +738,6 @@ export function AgentSection({
 					const chosen = coord ? catalog?.find((m) => m.id === coord.id && m.provider === coord.provider) : undefined;
 					const levels = chosen ? chosen.supportedLevels : THINKING_LEVELS;
 					const thisMenuOpen = openMenu?.target === slot ? openMenu.kind : null;
-					// Vision slots pick from image-capable models only.
-					const slotCatalog =
-						slot === "vision" ? catalog?.filter((m) => m.input.includes("image")) : catalog;
 					return (
 						<Fragment key={slot}>
 						<SettingsRow
@@ -784,9 +782,10 @@ export function AgentSection({
 										menuClass="flex w-[22rem] flex-col rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
 									>
 										<ModelMenuList
-											models={slotCatalog ?? undefined}
+											models={catalog ?? undefined}
 											effectiveId={modelId}
 											effectiveProvider={provider}
+											vision={slot === "vision"}
 											onPick={(entry) => {
 												// Auto-populate (chunk 2, owner: "populate everywhere"): the
 												// fresh pick writes a level — the stored one rides as-is
@@ -828,7 +827,7 @@ export function AgentSection({
 							<SlotFallbackRow
 								slot={slot}
 								models={models}
-								catalog={slotCatalog ?? undefined}
+								catalog={catalog ?? undefined}
 								openKind={openMenu?.target === `${slot}-fallback` ? openMenu.kind : null}
 								anchorRef={menuAnchorRef}
 								onOpen={(kind) => setOpenMenu(kind ? { target: `${slot}-fallback`, kind } : null)}

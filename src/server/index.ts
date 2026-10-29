@@ -49,3 +49,9 @@ export * from "./scope.ts";
 export * from "./projects.ts";
 export * from "./accounts.ts";
 export { hasAccounts } from "../store/accounts.ts";
+export { claudeCodeInstallationResponse } from "./claude-code.ts";
+// The custom endpoint module (registers into piModels() + probes for models).
+// No import side effects; the boot sync lives in stores.ts.
+export * from "./custom-provider.ts";
+export * from "./fork-features.ts";
+export { customProviderGet, customProviderMutation } from "./custom-provider-http.ts";

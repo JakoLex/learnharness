@@ -7,6 +7,7 @@ import { useBackdropDismiss } from "@/components/backdrop-dismiss";
 import { formatUsd, prettyModel, splitQualified } from "@/components/usage-format";
 import { cn } from "@/lib/utils";
 import {
+	CLAUDE_CODE_PROVIDER,
 	contextSegments,
 	nativeInputCause,
 	subscriptionLabel,
@@ -139,6 +140,9 @@ interface ContextDialogData {
 	/** Subscription-billed turns (plan usage, not API dollars). */
 	subscription: number;
 	providers: readonly string[];
+	/** The selected model is a Claude Code alias: its window is the one the
+	 *  CLI reported for this session. */
+	cliWindow?: boolean;
 }
 
 export function ContextDialog({ open, onClose, ...data }: ContextDialogData & { open: boolean; onClose: () => void }) {
@@ -184,6 +188,7 @@ export function ContextDialogBody({
 	unpriced,
 	subscription,
 	providers,
+	cliWindow = false,
 	onClose,
 }: ContextDialogData & { onClose: () => void }) {
 	const view = contextView({ turns, messages, contextTokens, limit });
@@ -339,6 +344,11 @@ export function ContextDialogBody({
 						<dt className="text-muted-foreground">Last activity</dt>
 						<dd className="text-right tabular-nums">{dateTime(lastActivity(messages))}</dd>
 					</dl>
+					{cliWindow && (
+						<p data-testid="context-cli-note" className="mt-2 text-xs text-muted-foreground">
+							Window reported by Claude Code; may be lower for auto-compaction.
+						</p>
+					)}
 					{providers.includes("ChatGPT") && (
 						<a
 							href="https://chatgpt.com/settings/usage"
@@ -369,7 +379,7 @@ export function ContextDialogBody({
 									</span>
 									<span className="flex shrink-0 items-center gap-2 tabular-nums">
 										<span className="text-muted-foreground">{turn.steps.length} steps</span>
-										<span>{subscriptionLabel(turn.model) ?? (c === null ? "—" : formatUsd(c))}</span>
+										<span>{turn.model.startsWith(`${CLAUDE_CODE_PROVIDER}:`) ? "CLI" : subscriptionLabel(turn.model) ?? (c === null ? "—" : formatUsd(c))}</span>
 									</span>
 								</li>
 							);

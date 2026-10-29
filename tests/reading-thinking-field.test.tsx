@@ -71,7 +71,7 @@ describe("the ask-the-tutor field (owner, 2026-10-28)", () => {
 		await act(async () => {
 			const event = new dom.window.Event("keydown", { bubbles: true, cancelable: true });
 			Object.assign(event, { key: "Enter", shiftKey: key.shiftKey ?? false, metaKey: false, ctrlKey: false });
-			host.querySelector("textarea")!.dispatchEvent(event);
+			host.querySelector("[data-file-path-input]")!.dispatchEvent(event);
 		});
 		await act(async () => root.unmount());
 		host.remove();

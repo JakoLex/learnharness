@@ -3,6 +3,7 @@
 import { useCallback } from "react";
 import { CornerDownLeftIcon } from "lucide-react";
 import { joinDictation, useDictationTarget } from "@/components/dictation";
+import { PathInput } from "@/components/path-input";
 
 /**
  * The ask-the-tutor field (2026-10-28; born as the reading-thinking field,
@@ -65,9 +66,9 @@ export function ReadingThinkingField({
 				Ask the tutor
 			</div>
 			<div className="flex items-end gap-2">
-				<textarea
+				<PathInput
 					value={value}
-					onChange={(e) => onChange(e.target.value)}
+					onValueChange={onChange}
 					/* py-0.5 (owner round, 2026-10-07): the scrollbar fix. Source
 					   Sans 3's font box is 22px at 16px; lh-input's 1.25 leading
 					   gives a 20px line box — the content area sticks 1px below the
@@ -108,7 +109,6 @@ export function ReadingThinkingField({
 						e.preventDefault();
 					}}
 					placeholder="Ask anything before the check…"
-					rows={1}
 					className="field-sizing-content lh-input max-h-40 min-w-0 flex-1 resize-none bg-transparent py-0.5 outline-none placeholder:text-muted-foreground/70"
 				/>
 				<button
