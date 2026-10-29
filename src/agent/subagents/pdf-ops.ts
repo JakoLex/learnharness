@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { convertDocument, docLoaderConfigured, DocLoaderFailedError, DocLoaderUnavailableError } from "../doc-loader.ts";
 
 /**
  * PDF plumbing for the pdf-reader sub-agent — sources v0 (2026-09): Node
@@ -158,12 +159,72 @@ export function parsePageSpec(spec: string, total: number): number[] {
 	return [...pages].sort((a, b) => a - b);
 }
 
-/** pdf_extract: text of the requested pages, `--- Page N ---` headed. */
+/** How long a pdf_extract/pdf_search call waits for the doc loader's first
+ *  answer (owner, 2026-10-29: 90 s, then pdf.js; the conversion runs on and
+ *  later calls read the cache). Mutable for tests. */
+export const docLoaderWait = { ms: 90_000 };
+
+type LoaderText = { pages: Map<number, string> } | { note: string } | null;
+
+/** The doc loader's pages for this PDF (src/agent/doc-loader.ts), a note
+ *  why pdf.js answers instead, or null when no loader is configured. */
+async function loaderText(filePath: string): Promise<LoaderText> {
+	if (!docLoaderConfigured()) return null;
+	try {
+		const result = await convertDocument({
+			bytes: new Uint8Array(await fs.readFile(filePath)),
+			fileName: path.basename(filePath),
+			contentType: "application/pdf",
+			signal: AbortSignal.timeout(docLoaderWait.ms),
+		});
+		const pages = new Map<number, string>();
+		for (const page of result.pages) if (page.page !== null) pages.set(page.page, page.text.trim());
+		return { pages };
+	} catch (err) {
+		if (err instanceof DocLoaderUnavailableError || err instanceof DocLoaderFailedError) {
+			console.warn(`[pdf-ops] doc loader for ${path.basename(filePath)}: ${err.message}`);
+			return { note: `the doc loader could not read this PDF (${err.message}) — pdf.js text layer; formulas and scanned pages may be missing` };
+		}
+		if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+			return { note: "the doc loader is still reading this PDF and keeps going in the background — pdf.js text layer for now; formulas and scanned pages may be missing, a later call gets the doc loader's text" };
+		}
+		throw err;
+	}
+}
+
+/** The pdf.js text layer of every page, `--- Page N ---` headed — no doc
+ *  loader (the notes import's fallback when the loader cannot answer). */
+export async function pdfTextLayer(filePath: string): Promise<string> {
+	const { doc, task } = await openDocument(filePath);
+	try {
+		const out: string[] = [];
+		for (let i = 1; i <= doc.numPages; i++) {
+			const content = await (await doc.getPage(i)).getTextContent();
+			out.push(`--- Page ${i} ---`, itemsToText(content.items as unknown[]), "");
+		}
+		return out.join("\n").trim();
+	} finally {
+		await task.destroy();
+	}
+}
+
+/** pdf_extract: text of the requested pages, `--- Page N ---` headed —
+ *  from the doc loader (Markdown, LaTeX) when it answers, else pdf.js. */
 export async function pdfExtract(filePath: string, pageSpec: string): Promise<string> {
 	const { doc } = await openDocument(filePath);
 	const pages = parsePageSpec(pageSpec, doc.numPages);
 	if (pages.length === 0) return "No pages selected — page spec matched nothing.";
+	const loader = await loaderText(filePath);
 	const out: string[] = [];
+	if (loader && "pages" in loader) {
+		out.push("Source: doc loader (Markdown, formulas as LaTeX, scanned pages read by a vision model).");
+		for (const i of pages) {
+			out.push(`--- Page ${i} ---`);
+			out.push(loader.pages.get(i) ?? "");
+		}
+		return out.join("\n");
+	}
+	if (loader) out.push(`Note: ${loader.note}.`);
 	for (const i of pages) {
 		const page = await doc.getPage(i);
 		const content = await page.getTextContent();
@@ -180,7 +241,8 @@ export interface PdfSearchHit {
 	context: string;
 }
 
-/** pdf_search: keyword/regex across all pages with context lines.
+/** pdf_search: keyword/regex across all pages with context lines — over
+ *  the doc loader's pages when it answers in time (see pdf_extract).
  *  pageTexts rides along so the agent can extract a hit's full page without
  *  a second pass (the skill pipelines `search → extract` the same way). */
 export async function pdfSearch(
@@ -202,10 +264,16 @@ export async function pdfSearch(
 	}
 	const hits: PdfSearchHit[] = [];
 	const pageTexts = new Map<number, string>();
+	const loader = await loaderText(filePath);
 	for (let i = 1; i <= doc.numPages; i++) {
-		const page = await doc.getPage(i);
-		const content = await page.getTextContent();
-		const text = itemsToText(content.items as unknown[]);
+		let text: string;
+		if (loader && "pages" in loader) {
+			text = loader.pages.get(i) ?? "";
+		} else {
+			const page = await doc.getPage(i);
+			const content = await page.getTextContent();
+			text = itemsToText(content.items as unknown[]);
+		}
 		pageTexts.set(i, text);
 		const lines = text.split("\n");
 		for (let ln = 0; ln < lines.length; ln++) {

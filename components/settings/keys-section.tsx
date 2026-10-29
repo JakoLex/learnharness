@@ -86,6 +86,13 @@ async function readCustomStatus(inspectKey = false): Promise<CustomStatus> {
  *  section can never drift from core/auth-keys.ts again. */
 const TOOL_IDS = AUTH_KEYS.map((k) => k.id) as readonly string[];
 
+/** Which tools group a curated key sits in (doc loader pair: fork, 2026-10-29). */
+function toolGroup(id: string): "Dictation" | "Search" | "Documents" {
+	if (id === "DEEPGRAM_API_KEY") return "Dictation";
+	if (id.startsWith("DOC_LOADER_")) return "Documents";
+	return "Search";
+}
+
 /** The custom endpoint's synthetic Add-provider entry (offered only while unconfigured). */
 export const CUSTOM_PROVIDER_INFO: ProviderKeyInfo = {
 	id: CUSTOM_PROVIDER.id,
@@ -590,8 +597,8 @@ export function KeysSection({
 				<ClaudeCodeInstallationStatus />
 			</SettingsGroup>}
 
-			{(["Dictation", "Search"] as const).map((label) => <SettingsGroup key={label} label={label} testid={label === "Dictation" ? "group-dictation" : "group-search"}>
-				{toolRows.filter((status) => label === "Dictation" ? status.id === "DEEPGRAM_API_KEY" : status.id !== "DEEPGRAM_API_KEY").map((status) => (
+			{(["Dictation", "Search", "Documents"] as const).map((label) => <SettingsGroup key={label} label={label} testid={`group-${label.toLowerCase()}`}>
+				{toolRows.filter((status) => toolGroup(status.id) === label).map((status) => (
 					<KeyTableRow
 						key={status.id}
 						label={status.info?.label ?? status.id}

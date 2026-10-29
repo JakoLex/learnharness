@@ -5,7 +5,9 @@
  * (field "files", any text format — the extractor is format-agnostic); the
  * pipeline mints a deterministic source id per file path, persists the
  * source record (the file's provenance + the run's usage), and runs
- * extractor → auditor → merger over the raw text.
+ * extractor → auditor → merger over the raw text. Documents (PDF, slides,
+ * Word, HTML, images — fork, 2026-10-29) are read by the doc loader first
+ * (src/server/documents.ts); a PDF without it reads its pdf.js text layer.
  *
  * Small concurrency cap: the model calls are the slow part, and a burst of
  * 25 simultaneous runs would trip provider rate limits — a 3-wide worker
@@ -13,7 +15,7 @@
  * healthy. The dock's chips + graph refetch track progress live through
  * /api/graph/status, as with session runs.
  */
-import { extraction, NotesImportError, scoped } from "@/src/server";
+import { extraction, isDocumentFile, NotesImportError, readDocument, scoped } from "@/src/server";
 import {
 	ModelsNotConfiguredError,
 	PROVIDER_KEY_MISSING_CODE,
@@ -30,6 +32,8 @@ interface ImportResult {
 	ok: boolean;
 	stats?: EmissionStats;
 	error?: string;
+	/** The document was read without the doc loader (src/server/documents.ts). */
+	notice?: string;
 	/** The machine discriminator when ok:false is a config refusal — the
 	 * BYOK models refusal (owner, 2026-09-22) or the provider-key refusal
 	 * (2026-09-25); the client can open the setup/keys flow off it. */
@@ -54,10 +58,21 @@ async function POSTHandler(request: Request) {
 			const next = queue.shift();
 			if (!next) return;
 			const { file, requestIndex } = next;
+			let notice: string | undefined;
 			try {
-				const text = await file.text();
-				const stats = await extraction.importNotes({ filePath: file.name, text });
-				results.push({ filePath: file.name, requestIndex, outcome: "completed", ok: true, stats });
+				// Documents (PDF, slides, Word, images) are read by the doc loader
+				// inside the import, as its "reading" phase; text files as before.
+				const stats = await extraction.importNotes(isDocumentFile(file.name)
+					? {
+						filePath: file.name,
+						read: async (signal) => {
+							const doc = await readDocument({ name: file.name, type: file.type, bytes: new Uint8Array(await file.arrayBuffer()) }, signal);
+							notice = doc.notice;
+							return doc.text;
+						},
+					}
+					: { filePath: file.name, text: await file.text() });
+				results.push({ filePath: file.name, requestIndex, outcome: "completed", ok: true, stats, ...(notice ? { notice } : {}) });
 			} catch (err) {
 				if (err instanceof ModelsNotConfiguredError) {
 					results.push({
@@ -87,6 +102,7 @@ async function POSTHandler(request: Request) {
 					outcome: err instanceof NotesImportError ? err.outcome : "failed",
 					...(err instanceof NotesImportError ? { stats: err.partialStats } : {}),
 					error: err instanceof Error ? err.message : String(err),
+					...(notice ? { notice } : {}),
 				});
 			}
 		}

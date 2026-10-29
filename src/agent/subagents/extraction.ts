@@ -768,7 +768,9 @@ export function validateBridges(
  *  extractor is done but the auditor may not start until the graph is
  *  stable. */
 // "bridging" (fork, 2026-10-27): the cross-source pass after an import.
-export type ExtractionPhase = "queued" | "extracting" | "waiting" | "auditing" | "bridging" | "merging";
+// "reading" (fork, 2026-10-29): an import's document goes through the doc
+// loader before any chunk runs (NotesImportInput.read).
+export type ExtractionPhase = "queued" | "reading" | "extracting" | "waiting" | "auditing" | "bridging" | "merging";
 
 /** One in-flight pipeline run. Module-level: one process, one registry.
  *  Exported for the status payload's consumer typing (the dock). */
@@ -911,13 +913,22 @@ export interface ExtractionPipelineDeps extends GraphDeps, ExtractionModels {
 	bridgeAfterImport?: boolean;
 }
 
-export interface NotesImportInput {
+export type NotesImportInput = {
 	/** The source's file path — its identity (deterministic src id) AND its
 	 *  provenance label in the detail card. */
 	filePath: string;
-	/** The file's raw content, VERBATIM — any format. */
-	text: string;
-}
+} & (
+	| {
+		/** The file's raw content, VERBATIM — any format. */
+		text: string;
+	}
+	| {
+		/** A document that must be read first (PDF, slides… through the doc
+		 *  loader — fork, 2026-10-29). Runs as the "reading" phase; the
+		 *  signal is the dock's abort. */
+		read: (signal: AbortSignal) => Promise<string>;
+	}
+);
 
 /** A notes import did not finish. Earlier graph writes and billed usage are
  * retained; partialStats describe known merges, not an all-or-nothing result. */
@@ -1698,9 +1709,27 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		if (inFlight.has(id)) throw new NotesImportError("busy", { nodes: 0, chains: 0 }, "This file is already being imported. Try again when it finishes.");
 		inFlight.add(id);
 		try {
+			let text: string;
+			if ("read" in input) {
+				// Refuse unready stages BEFORE a conversion that can take minutes.
+				refuseIfStagesUnready();
+				setPhase(id, "reading", "notes", input.filePath);
+				try {
+					text = await input.read(runningExtractions.get(id)!.controller.signal);
+				} catch (err) {
+					if (err instanceof Error && err.name === "AbortError") {
+						throw new NotesImportError("aborted", { nodes: 0, chains: 0 }, "Import aborted while the document was being read.", { cause: err });
+					}
+					throw err;
+				} finally {
+					finishExtraction(id);
+				}
+			} else {
+				text = input.text;
+			}
 			const importedAt = new Date().toISOString();
 			graphStore.upsertSource({ id, filePath: input.filePath, importedAt });
-			const stats = await runNotesExtraction({ id, ...input, importedAt });
+			const stats = await runNotesExtraction({ id, filePath: input.filePath, text, importedAt });
 			// Fork (2026-10-27): only a COMPLETED import bridges — partial or
 			// aborted runs threw above.
 			if (deps.bridgeAfterImport) await runBridge(id, input.filePath);

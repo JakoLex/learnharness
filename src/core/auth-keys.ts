@@ -54,6 +54,18 @@ export const AUTH_KEYS: readonly AuthKeyInfo[] = [
 		description: "Web-search engine for the researcher sub-agent — the alternative to Tavily. Setting the key activates it.",
 		docsUrl: "https://brave.com/search/api/",
 	},
+	{
+		id: "DOC_LOADER_URL",
+		label: "Doc loader (base URL)",
+		description: "An Open WebUI \"External\" document loader (PUT <base>/process). With its key set, imports read PDFs, slides, Word files and images through it, and the PDF reader gets its Markdown with LaTeX, e.g. http://docs.internal:8080",
+		docsUrl: "https://docs.openwebui.com/",
+	},
+	{
+		id: "DOC_LOADER_KEY",
+		label: "Doc loader key",
+		description: "The doc loader's bearer key. Both this and the base URL activate it.",
+		docsUrl: "https://docs.openwebui.com/",
+	},
 ] as const;
 
 const AUTH_KEY_IDS: ReadonlySet<string> = new Set(AUTH_KEYS.map((k) => k.id));
@@ -190,6 +202,14 @@ export function validateKeyShape(id: string, rawValue: string): KeyShapeResult {
 		case "DEEPGRAM_API_KEY":
 			// No public format — the length floor only catches truncated pastes.
 			return nonEmpty(20);
+		case "DOC_LOADER_URL":
+			// Not a secret — a LAN base URL, like SEARXNG_URL.
+			return /^https?:\/\/\S+$/.test(value)
+				? { ok: true }
+				: { ok: false, error: `${id} must be a full http(s) base URL, e.g. http://docs.internal:8080` };
+		case "DOC_LOADER_KEY":
+			// The loader's own bearer — paste hygiene only.
+			return nonEmpty(16);
 		default:
 			return { ok: false, error: `unknown key "${id}" (supported: ${[...AUTH_KEY_IDS].join(", ")})` };
 	}

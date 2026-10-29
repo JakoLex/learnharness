@@ -254,6 +254,8 @@ describe("classifyKeys — the Keys section's two-group projection", () => {
 			"TAVILY_API_KEY",
 			"SEARXNG_URL",
 			"BRAVE_API_KEY",
+			"DOC_LOADER_URL",
+			"DOC_LOADER_KEY",
 		]);
 		assert.ok(out.toolRows[0]!.present);
 		assert.ok(!out.toolRows[1]!.present);

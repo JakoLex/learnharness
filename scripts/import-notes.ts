@@ -1,7 +1,9 @@
 /**
  * Import raw notes files through the format-agnostic front door (vision §1,
  * 2026-09-13) — every *.md / *.txt file in a directory becomes one
- * extraction run (extractor → auditor → merger) over its raw text. Run
+ * extraction run (extractor → auditor → merger) over its raw text, and
+ * every document (PDF, slides, Word, HTML, images — 2026-10-29) over the
+ * doc loader's Markdown (src/server/documents.ts). Run
  * from this worktree only — data never crosses trees:
  *
  *   npx tsx --env-file=.env.local scripts/import-notes.ts --project <id> <dir> [concurrency]
@@ -18,13 +20,14 @@ import * as path from "node:path";
 import { createExtractionPipeline } from "../src/agent/subagents/extraction.ts";
 import { getGraph } from "../src/core/graph.ts";
 import { effectiveSettings, stores } from "../src/server/stores.ts";
+import { isDocumentFile, readDocument } from "../src/server/documents.ts";
 
 async function main() {
 	const dir = process.argv[2] ?? "real-data-extraction/learn-sessions";
 	const limit = Number(process.argv[3] ?? 4);
 	const files = fs
 		.readdirSync(dir)
-		.filter((f) => f.endsWith(".md") || f.endsWith(".markdown") || f.endsWith(".txt"))
+		.filter((f) => f.endsWith(".md") || f.endsWith(".markdown") || f.endsWith(".txt") || isDocumentFile(f))
 		.sort();
 	console.log(`[import-notes] ${files.length} note files from ${dir} (concurrency ${limit})`);
 
@@ -42,7 +45,16 @@ async function main() {
 			const filePath = path.join(dir, file);
 			const t0 = Date.now();
 			try {
-				const stats = await pipeline.importNotes({ filePath, text: fs.readFileSync(filePath, "utf-8") });
+				const stats = await pipeline.importNotes(isDocumentFile(file)
+					? {
+						filePath,
+						read: async (signal) => {
+							const doc = await readDocument({ name: file, bytes: new Uint8Array(fs.readFileSync(filePath)) }, signal);
+							if (doc.notice) console.warn(`[import-notes] ${file}: ${doc.notice}`);
+							return doc.text;
+						},
+					}
+					: { filePath, text: fs.readFileSync(filePath, "utf-8") });
 				totals.nodes += stats.nodes;
 				totals.chains += stats.chains ?? 0;
 				console.log(
