@@ -2,7 +2,9 @@ import { Type } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { serverExecute } from "../tool-execute.ts";
 import { getGraph, graphSessionIndex, graphSessionPropositions } from "../../core/graph.ts";
+import { birthSessionOf } from "../../core/session-clusters.ts";
 import type { ChatStore, GraphStore } from "../../core/ports.ts";
+import { readTextSlice } from "./read.ts";
 
 /**
  * THE PROBER'S GRAPH TOOLS (wave 7, owner-locked 2026-09-23): context
@@ -21,6 +23,14 @@ import type { ChatStore, GraphStore } from "../../core/ports.ts";
  * (graphToolsEnabled — the graph master switch AND the agent.graphTools
  * toggle); the composition root decides, the factory just receives the
  * store (absent = the gate is closed, no map tools — tests drive this).
+ *
+ * FORK (owner, 2026-10-30 — "what is the graph for, then?"): the map's
+ * prose IS the tutor's business here. list_propositions carries each
+ * proposition's statement and the chains concluding in the session,
+ * search_graph finds propositions anywhere, and read_source reads the text
+ * an import kept (config.sourceTextFile) — only sources that still have
+ * propositions, the same set list_sessions shows. The prober, the teacher
+ * and practice all get this set, behind the same gate.
  */
 
 /** What the graph tools close over: the stores the session views read. */
@@ -38,8 +48,54 @@ const listPropositionsInput = Type.Object({
 	}),
 });
 
+/** What one tool answer may hold — the read tool's cap. */
+const MAX_ANSWER_BYTES = 50 * 1024;
+const MAX_HITS = 40;
+
+/** Lines up to the byte cap, then one line saying what was left out. */
+function capped(lines: string[], more: (left: number) => string): string[] {
+	const out: string[] = [];
+	let bytes = 0;
+	for (const [i, line] of lines.entries()) {
+		bytes += Buffer.byteLength(line, "utf-8") + 1;
+		if (bytes > MAX_ANSWER_BYTES) {
+			out.push(more(lines.length - i));
+			break;
+		}
+		out.push(line);
+	}
+	return out;
+}
+
+const searchGraphInput = Type.Object({
+	query: Type.String({
+		minLength: 1,
+		description: "Glob pattern over proposition names, statements and phrasings — e.g. *trigger*. A bare term gets implicit surrounding *.",
+	}),
+});
+
+const readSourceInput = Type.Object({
+	source: Type.Optional(
+		Type.String({ description: "The source's id (src_…) as read_source or list_sessions reported it. Omit to list the readable sources." }),
+	),
+	offset: Type.Optional(Type.Number({ description: "Line number to start reading from (1-indexed)" })),
+	limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
+	query: Type.Optional(
+		Type.String({ minLength: 1, description: "Case-insensitive text to look for: returns the matching lines with line and page numbers instead of a slice." }),
+	),
+});
+
 export function proberGraphTools(ctx: GraphToolContext): Record<string, AgentTool<any>> {
 	const deps = { chatStore: ctx.chatStore, graphStore: ctx.graphStore };
+	const readSourceText = ctx.graphStore.readSourceText?.bind(ctx.graphStore);
+	/** The imported sources whose text was kept AND that still have
+	 *  propositions — deleting a source's nodes takes it off the shelf. */
+	const readableSources = () =>
+		graphSessionIndex(deps).flatMap((s) => {
+			if (s.kind !== "file") return [];
+			const text = readSourceText?.(s.id);
+			return text === null || text === undefined ? [] : [{ id: s.id, name: s.name, text }];
+		});
 	return {
 		list_sessions: {
 			name: "list_sessions",
@@ -63,19 +119,106 @@ export function proberGraphTools(ctx: GraphToolContext): Record<string, AgentToo
 			name: "list_propositions",
 			label: "list_propositions",
 			description:
-				"List the propositions BORN in one knowledge-graph session — what was covered there. " +
-				"Names only — no statement text, no session contents (owner ruling 2026-09-23: the map's ORGANIZATION is your business, its prose is not).",
+				"List the propositions BORN in one knowledge-graph session — what was covered there — each with its full statement, " +
+				"followed by the reasoning chains that conclude in this session (A ∧ B ⟹ C: the premises jointly imply the conclusion). " +
+				"Covered is not understood: the map says what his material contained, your questions find out what he holds.",
 			parameters: listPropositionsInput,
 			execute: serverExecute("list_propositions", listPropositionsInput, async ({ session }): Promise<string> => {
 				const propositions = graphSessionPropositions(deps, session);
 				if (propositions.length === 0) {
 					return `No propositions born in session "${session}". Call list_sessions for the current ids.`;
 				}
-				const lines = propositions.map((p) => `- ${p.name}`);
-				return `${propositions.length} proposition(s) covered in this session:\n${lines.join("\n")}`;
+				const graph = getGraph(deps.graphStore);
+				const nodes = new Map(graph.nodes.map((n) => [n.id, n]));
+				const statementLines = propositions.map((p) => `- ${p.name} [${p.nodeId}]: ${nodes.get(p.nodeId)?.statement ?? "(no statement)"}`);
+				// A chain lives where its CONCLUSION was born (the chain table's
+				// rule); a chain with a vanished member is skipped.
+				const chainLines = graph.chains
+					.filter((c) => {
+						const conclusion = nodes.get(c.conclusion);
+						return conclusion && birthSessionOf(conclusion) === session && c.premises.every((p) => nodes.has(p));
+					})
+					.map((c) => `- ${c.premises.map((p) => nodes.get(p)!.name).join(" ∧ ")} ⟹ ${nodes.get(c.conclusion)!.name}`);
+				const lines = [
+					`${propositions.length} proposition(s) covered in this session:`,
+					...statementLines,
+					...(chainLines.length > 0 ? ["", `${chainLines.length} chain(s) concluding in this session:`, ...chainLines] : []),
+				];
+				return capped(lines, (left) => `[${left} more line(s) not shown — narrow with search_graph]`).join("\n");
 			}),
 		},
+		search_graph: {
+			name: "search_graph",
+			label: "search_graph",
+			description:
+				"Search the whole knowledge graph for propositions — glob over names, statements and phrasings. " +
+				`Returns up to ${MAX_HITS} matches, each with its name, id, the session it was born in, and its full statement.`,
+			parameters: searchGraphInput,
+			execute: serverExecute("search_graph", searchGraphInput, async ({ query }): Promise<string> => {
+				const names = new Map(graphSessionIndex(deps).map((s) => [s.id, s.name]));
+				const hits = getGraph(deps.graphStore).nodes.filter(
+					(n) => globMatch(query, n.name) || globMatch(query, n.statement) || n.aliases.some((a) => globMatch(query, a)),
+				);
+				if (hits.length === 0) return `No proposition matches "${query}".`;
+				const lines = hits.slice(0, MAX_HITS).map((n) => {
+					const born = birthSessionOf(n);
+					return `- ${n.name} [${n.id}]${born ? ` — from ${names.get(born) ?? born}` : ""}: ${n.statement}`;
+				});
+				const head = hits.length > MAX_HITS ? `${hits.length} matches, showing ${MAX_HITS} — narrow the query:` : `${hits.length} match(es):`;
+				return capped([head, ...lines], (left) => `[${left} more match(es) not shown — narrow the query]`).join("\n");
+			}),
+		},
+		...(readSourceText
+			? {
+				read_source: {
+					name: "read_source",
+					label: "read_source",
+					description:
+						"Read the text of a file he imported (lecture script, data sheet, manual) as the import read it — Markdown with " +
+						"formulas as LaTeX when the doc loader read it, `--- Page N ---` markers where pages are known. " +
+						"No arguments: list the readable sources. With `source`: read it like `read` (output truncated to 2000 lines or 50KB; " +
+						"continue with offset). With `source` + `query`: the matching lines with their line and page numbers.",
+					parameters: readSourceInput,
+					execute: serverExecute("read_source", readSourceInput, async ({ source, offset, limit, query }): Promise<string> => {
+						const sources = readableSources();
+						if (!source) {
+							if (sources.length === 0) return "No imported source is readable — nothing imported since texts are kept, or its propositions were deleted.";
+							const lines = sources.map((s) => `- ${s.name} — id: ${s.id}, ${s.text.split("\n").length} lines`);
+							return `${sources.length} readable source(s):\n${lines.join("\n")}`;
+						}
+						const hit = sources.find((s) => s.id === source);
+						if (!hit) {
+							return `Source "${source}" is not readable — it is not an imported source that still has propositions, or its text was not kept. Call read_source with no arguments for the readable ones.`;
+						}
+						if (query) return searchSourceText(hit.name, hit.text, query);
+						return `${hit.name}\n\n${readTextSlice(hit.text, offset, limit)}`;
+					}),
+				},
+			}
+			: {}),
 	};
+}
+
+/** The lines of a kept source text that contain `query`, with the page
+ *  the nearest `--- Page N ---` marker above names. */
+function searchSourceText(name: string, text: string, query: string): string {
+	const needle = query.toLowerCase();
+	const hits: string[] = [];
+	let total = 0;
+	let page: number | null = null;
+	for (const [i, line] of text.split("\n").entries()) {
+		const marker = /^--- Page (\d+) ---$/.exec(line.trim());
+		if (marker) {
+			page = Number(marker[1]);
+			continue;
+		}
+		if (!line.toLowerCase().includes(needle)) continue;
+		total++;
+		if (hits.length < MAX_HITS) hits.push(`- line ${i + 1}${page !== null ? ` (page ${page})` : ""}: ${line.trim()}`);
+	}
+	if (total === 0) return `No line of ${name} contains "${query}".`;
+	const head = total > MAX_HITS ? `${total} matching lines in ${name}, showing ${MAX_HITS}:` : `${total} matching line(s) in ${name}:`;
+	return capped([head, ...hits], (left) => `[${left} more line(s) not shown]`).join("\n");
 }
 
 // ─── the auditor's graph tools (2026-09-27 relink) ───────────────────────────

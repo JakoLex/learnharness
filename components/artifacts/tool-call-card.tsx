@@ -39,6 +39,12 @@ function headlineArg(tool: string, input: unknown): string {
 	if (tool === "list_propositions" && typeof inp.session === "string" && inp.session.length > 0) {
 		return inp.session;
 	}
+	// Fork (2026-10-30): search_graph's query; read_source's source id, plus
+	// its query when it searched.
+	if (tool === "search_graph" && typeof inp.query === "string") return inp.query;
+	if (tool === "read_source" && typeof inp.source === "string" && inp.source.length > 0) {
+		return typeof inp.query === "string" && inp.query.length > 0 ? `${inp.source} "${inp.query}"` : inp.source;
+	}
 	return "";
 }
 

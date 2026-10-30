@@ -68,7 +68,7 @@ async function POSTHandler(request: Request) {
 						read: async (signal) => {
 							const doc = await readDocument({ name: file.name, type: file.type, bytes: new Uint8Array(await file.arrayBuffer()) }, signal);
 							notice = doc.notice;
-							return doc.text;
+							return doc;
 						},
 					}
 					: { filePath: file.name, text: await file.text() });

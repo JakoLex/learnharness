@@ -51,7 +51,7 @@ async function main() {
 						read: async (signal) => {
 							const doc = await readDocument({ name: file, bytes: new Uint8Array(fs.readFileSync(filePath)) }, signal);
 							if (doc.notice) console.warn(`[import-notes] ${file}: ${doc.notice}`);
-							return doc.text;
+							return doc;
 						},
 					}
 					: { filePath, text: fs.readFileSync(filePath, "utf-8") });

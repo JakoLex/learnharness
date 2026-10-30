@@ -7,7 +7,7 @@
  * defaults) applies at the capture.
  */
 
-import type { Usage } from "@earendil-works/pi-ai";
+import { isRetryableAssistantError, type AssistantMessage, type Usage } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { TSchema } from "typebox";
 import { invalidInputResult, toToolResult } from "../tool-execute.ts";
@@ -45,8 +45,40 @@ export function healStringifiedArrays(raw: unknown): unknown {
 	return out;
 }
 
-export async function runSubmitAgent<T>(opts: {
+/** THE ONE RETRY (fork, owner 2026-10-30): a submit agent that breaks off
+ *  on a transient failure — a stream cut mid-answer, a network or 5xx error,
+ *  pi's own retryable list — runs once more after this wait (2026-10-29 21:50:
+ *  a llama-swap reload cost a whole import chunk and a bridge pass). Aborts,
+ *  schema failures and a second break still throw. Mutable for tests. */
+export const submitRetry = { delayMs: 30_000 };
+
+function transientBreak(err: unknown): err is Error {
+	if (!(err instanceof Error) || err.name === "AbortError") return false;
+	return isRetryableAssistantError({ stopReason: "error", errorMessage: err.message } as AssistantMessage);
+}
+
+function waitOrAbort(ms: number, signal: AbortSignal | undefined): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const aborted = () => {
+			clearTimeout(timer);
+			const err = new Error("aborted");
+			err.name = "AbortError";
+			reject(err);
+		};
+		const timer = setTimeout(() => {
+			signal?.removeEventListener("abort", aborted);
+			resolve();
+		}, ms);
+		if (signal?.aborted) aborted();
+		else signal?.addEventListener("abort", aborted, { once: true });
+	});
+}
+
+type SubmitAgentOptions<T> = {
 	role: ModelRole;
+	/** The log's name for this stage ("bridger" runs on the auditor role);
+	 *  defaults to the role. */
+	stage?: string;
 	toolName: string;
 	toolDescription: string;
 	parameters: TSchema;
@@ -76,7 +108,23 @@ export async function runSubmitAgent<T>(opts: {
 	 *  a problem string yields an isError result (invalidInputResult) →
 	 *  the model retries within maxTurns. null = accept. */
 	validate?: (value: T) => string | null;
-}): Promise<T> {
+};
+
+export async function runSubmitAgent<T>(opts: SubmitAgentOptions<T>): Promise<T> {
+	try {
+		return await attemptSubmit(opts);
+	} catch (err) {
+		if (!transientBreak(err) || opts.signal?.aborted) throw err;
+		console.warn(
+			`[extraction ${opts.chatId ?? "-"}] ${opts.stage ?? opts.role} broke off (${err.message}) — ` +
+				`retrying once in ${Math.round(submitRetry.delayMs / 1000)} s`,
+		);
+		await waitOrAbort(submitRetry.delayMs, opts.signal);
+		return attemptSubmit(opts);
+	}
+}
+
+async function attemptSubmit<T>(opts: SubmitAgentOptions<T>): Promise<T> {
 	let submitted: T | undefined;
 	const result = await runSubagent(
 		[

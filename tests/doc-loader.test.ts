@@ -144,6 +144,39 @@ test("readDocument: the loader's Markdown; without it a PDF falls back to pdf.js
 	await assert.rejects(readDocument({ name: "folien.pptx", bytes: new Uint8Array([1, 2, 3]) }), /\.pptx files need the doc loader — set DOC_LOADER_URL/);
 });
 
+test("readDocument keeps a paged copy of the loader's text for read_source (2026-10-30)", async () => {
+	answer = () => Response.json(pages("Erste Seite\n\n", "Zweite Seite"));
+	const doc = await readDocument({ name: "skript.pdf", type: "application/pdf", bytes: pdfBytes() });
+	assert.equal(doc.text, "Erste Seite\n\nZweite Seite", "the extraction's text is unchanged");
+	assert.equal(doc.pagedText, "--- Page 1 ---\nErste Seite\n\n--- Page 2 ---\nZweite Seite");
+	// Without page numbers (slides come as one) there is no paged copy.
+	fs.rmSync(join(testData, "doc-cache"), { recursive: true, force: true });
+	answer = () => Response.json([{ page_content: "Folie eins", metadata: {} }]);
+	const slides = await readDocument({ name: "folien.pptx", bytes: pdfBytes() });
+	assert.equal(slides.pagedText, undefined);
+});
+
+test("a weaker read is logged: pdf.js fallback, unreadable formats, the PDF reader — never 'not configured'", async () => {
+	const warnings: string[] = [];
+	const originalWarn = console.warn;
+	console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+	try {
+		answer = () => { throw new TypeError("connect ECONNREFUSED"); };
+		await readDocument({ name: "skript.pdf", type: "application/pdf", bytes: pdfBytes() });
+		await assert.rejects(readDocument({ name: "folien.pptx", bytes: new Uint8Array([1, 2, 3]) }));
+		await pdfExtract(PDF, "1");
+		delete env.DOC_LOADER_KEY;
+		await readDocument({ name: "plain.pdf", bytes: pdfBytes() });
+	} finally {
+		console.warn = originalWarn;
+	}
+	assert.deepEqual(warnings, [
+		"[doc-loader] skript.pdf: read with pdf.js instead — doc loader unreachable: connect ECONNREFUSED",
+		"[doc-loader] folien.pptx: not readable — doc loader unreachable: connect ECONNREFUSED",
+		"[doc-loader] sample-3page.pdf: PDF reader used pdf.js — doc loader unreachable: connect ECONNREFUSED",
+	]);
+});
+
 test("pdf_extract/pdf_search read the loader's pages, with a source line", async () => {
 	answer = () => Response.json(pages("Seite eins mit $\\alpha$", "Seite zwei", "Seite drei: Kraft $F = ma$"));
 	const text = await pdfExtract(PDF, "1,3");
@@ -183,7 +216,7 @@ test("the import route reads a PDF inside importNotes and reports the fallback n
 	let readText = "";
 	extraction.importNotes = async (input) => {
 		assert.ok("read" in input, "documents arrive as read(), not text");
-		readText = await input.read(new AbortController().signal);
+		readText = (await input.read(new AbortController().signal)).text;
 		return { nodes: 1, chains: 0 };
 	};
 	const form = new FormData();

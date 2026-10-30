@@ -34,7 +34,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { LEDGER_FILES, positionsFile, sourcesFile } from "../../config.ts";
+import { LEDGER_FILES, positionsFile, sourcesFile, sourceTextFile } from "../../config.ts";
 import { assertGraphFormat, ensureGraphFormat } from "./graph-format.ts";
 import type {
 	GraphChain,
@@ -186,6 +186,23 @@ export const graphStore: GraphStore = {
 			: [...(source.extractions ?? []), entry];
 		writeSourceMap(all);
 	},
+	/** Fork (owner, 2026-10-30): the import's text, atomically replaced. */
+	writeSourceText(id: string, text: string): void {
+		if (!SOURCE_ID.test(id)) throw new Error(`not a source id: ${id}`);
+		const file = sourceTextFile(id);
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		const tmp = `${file}.${process.pid}.tmp`;
+		fs.writeFileSync(tmp, text, "utf-8");
+		fs.renameSync(tmp, file);
+	},
+	readSourceText(id: string): string | null {
+		if (!SOURCE_ID.test(id)) return null;
+		try {
+			return fs.readFileSync(sourceTextFile(id), "utf-8");
+		} catch {
+			return null;
+		}
+	},
 
 	// ── the layout ledger (config.positionsFile() — a JSON map) ──
 	readPositions(): Record<string, Position> {
@@ -332,6 +349,9 @@ function purgeLegacyLedgers(): void {
 		}
 	}
 }
+
+/** Source ids are minted as `src_<hex>`; anything else never reaches a path. */
+const SOURCE_ID = /^src_[0-9a-f]+$/;
 
 const isNotesSource = (v: unknown): v is NotesSource =>
 	isRecord(v) && isString(v.id) && isString(v.filePath) && isString(v.importedAt);

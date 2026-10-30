@@ -504,6 +504,9 @@ export async function handleChatInput(
 						// The registry drop's signal (2026-09-20): no live engine
 						// = no research tool in the teacher's registry.
 						searchAvailable,
+						// Fork (owner, 2026-10-30): the teacher reads the map and
+						// the imported sources too, behind the prober's gate.
+						...(graphToolsEnabled(effective) ? { graphStore: stores.graphStore } : {}),
 					},
 					agentOpts,
 				)

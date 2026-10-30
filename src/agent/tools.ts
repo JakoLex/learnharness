@@ -419,6 +419,9 @@ export interface TeacherToolContext extends PlanToolContext {
 	spawn: (job: JobRecord, input: ResearchInput | DemoInput | VisualInput | PdfInput) => void;
 	/** Retained search-status seam; research dispatch is available keylessly. */
 	searchAvailable?: () => boolean;
+	/** Fork (owner, 2026-10-30): the map + source readers, present when the
+	 *  graph-tools gate opened — the prober's set (proberGraphTools). */
+	graphStore?: GraphStore;
 }
 
 /**
@@ -475,6 +478,7 @@ export function createTeacherTools(
 			...fileTools(),
 			...planTools(ctx),
 			...withoutHostPdf(jobTools({ chatId: ctx.chatId, jobStore: ctx.jobStore, spawn: ctx.spawn, searchAvailable: ctx.searchAvailable })),
+			...(ctx.graphStore ? proberGraphTools({ chatStore: ctx.chatStore, graphStore: ctx.graphStore }) : {}),
 		},
 		withoutMechanics(enabled),
 		),

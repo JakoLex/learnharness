@@ -685,6 +685,7 @@ function runBridger(
 				: `Unknown node id(s): ${unknown.join(", ")}. Copy ids verbatim from list_propositions / find, or drop those chains.`;
 		},
 		role: "auditor",
+		stage: "bridger",
 		chatId: sourceId,
 		toolName: "submit_bridges",
 		toolDescription: "Submit the cross-source chains (premises + conclusion + reason, existing ids only).",
@@ -925,8 +926,10 @@ export type NotesImportInput = {
 	| {
 		/** A document that must be read first (PDF, slides… through the doc
 		 *  loader — fork, 2026-10-29). Runs as the "reading" phase; the
-		 *  signal is the dock's abort. */
-		read: (signal: AbortSignal) => Promise<string>;
+		 *  signal is the dock's abort. `text` feeds the extraction;
+		 *  `pagedText` (the same text with page markers) is what
+		 *  `read_source` keeps when the reader had pages (2026-10-30). */
+		read: (signal: AbortSignal) => Promise<{ text: string; pagedText?: string }>;
 	}
 );
 
@@ -1710,12 +1713,15 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		inFlight.add(id);
 		try {
 			let text: string;
+			let kept: string;
 			if ("read" in input) {
 				// Refuse unready stages BEFORE a conversion that can take minutes.
 				refuseIfStagesUnready();
 				setPhase(id, "reading", "notes", input.filePath);
 				try {
-					text = await input.read(runningExtractions.get(id)!.controller.signal);
+					const read = await input.read(runningExtractions.get(id)!.controller.signal);
+					text = read.text;
+					kept = read.pagedText ?? read.text;
 				} catch (err) {
 					if (err instanceof Error && err.name === "AbortError") {
 						throw new NotesImportError("aborted", { nodes: 0, chains: 0 }, "Import aborted while the document was being read.", { cause: err });
@@ -1726,9 +1732,17 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 				}
 			} else {
 				text = input.text;
+				kept = input.text;
 			}
 			const importedAt = new Date().toISOString();
 			graphStore.upsertSource({ id, filePath: input.filePath, importedAt });
+			// Fork (owner, 2026-10-30): the text stays readable for the tutor
+			// (read_source). A failed write costs only that, never the import.
+			try {
+				graphStore.writeSourceText?.(id, kept);
+			} catch (err) {
+				console.warn(`[extraction ${id}] could not keep the source text: ${(err as Error).message}`);
+			}
 			const stats = await runNotesExtraction({ id, filePath: input.filePath, text, importedAt });
 			// Fork (2026-10-27): only a COMPLETED import bridges — partial or
 			// aborted runs threw above.

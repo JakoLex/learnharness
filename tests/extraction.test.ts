@@ -85,6 +85,7 @@ function memoryLedgers() {
 	const coverage: CoverageEntry[] = [];
 	const sources = new Map<string, NotesSource>();
 	const positions = new Map<string, { x: number; y: number }>();
+	const texts = new Map<string, string>();
 		return {
 		appendNode: (n: GraphNode) => void nodes.push(n),
 		readNodes: () => nodes.map((n) => ({ ...n })),
@@ -102,6 +103,9 @@ function memoryLedgers() {
 			sources.set(s.id, { ...s, extractions: [...(prev?.extractions ?? [])] });
 		},
 		readSources: () => [...sources.values()].map((s) => ({ ...s, extractions: [...(s.extractions ?? [])] })),
+		// Kept import texts (fork, 2026-10-30 — read_source).
+		writeSourceText: (id: string, text: string) => void texts.set(id, text),
+		readSourceText: (id: string) => texts.get(id) ?? null,
 		appendSourceUsage: (id: string, entry: ExtractionRunUsage) => {
 			const source = sources.get(id);
 			if (!source) return;
@@ -1490,6 +1494,28 @@ describe("the extractor redesign (owner, 2026-09-30): chains are the deliverable
 });
 
 describe("the notes front door (importNotes — format-agnostic)", () => {
+	it("keeps the text it read for read_source — the paged copy when the reader had one (fork, 2026-10-30)", async () => {
+		const ledgers = memoryLedgers();
+		const mk = () =>
+			createExtractionPipeline({
+				chatStore,
+				graphStore: ledgers,
+				extractor: submitModel("submit_findings", NOTES_FINDINGS),
+				auditor: submitModel("submit_review", NOTES_VERDICT),
+			});
+		await mk().importNotes({ filePath: "/vault/learn vim.md", text: NOTES_TEXT });
+		const notes = ledgers.readSources().find((s) => s.filePath === "/vault/learn vim.md")!;
+		assert.equal(ledgers.readSourceText(notes.id), NOTES_TEXT);
+
+		await mk().importNotes({
+			filePath: "skript.pdf",
+			read: async () => ({ text: NOTES_TEXT, pagedText: `--- Page 1 ---\n${NOTES_TEXT}` }),
+		});
+		const pdf = ledgers.readSources().find((s) => s.filePath === "skript.pdf")!;
+		assert.equal(ledgers.readSourceText(pdf.id), `--- Page 1 ---\n${NOTES_TEXT}`, "the paged copy is kept");
+	});
+
+
 	it("imports raw notes end to end: source record, file-scoped provenance", async () => {
 		const ledgers = memoryLedgers();
 		const seen: { kind?: string; label?: string }[] = [];

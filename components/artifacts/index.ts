@@ -50,4 +50,8 @@ export const artifactRenderers: Record<string, ComponentType<ArtifactPartProps>>
 	// discipline (their results are pre-formatted strings too).
 	list_sessions: ToolCallCard,
 	list_propositions: ToolCallCard,
+	// Fork (owner, 2026-10-30): the map search and the source reader — the
+	// same card, headlined by their query / source id.
+	search_graph: ToolCallCard,
+	read_source: ToolCallCard,
 };

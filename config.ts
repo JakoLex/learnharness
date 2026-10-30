@@ -141,6 +141,12 @@ export const LEDGER_FILES = {
 export function sourcesFile(): string {
 	return path.join(PATHS.graph, "sources.json");
 }
+/** Fork (owner, 2026-10-30): the text an import read, one file per source
+ *  (`read_source`) — the doc loader's Markdown with page markers, the
+ *  pdf.js text layer, or the notes file as it was. A re-import overwrites. */
+export function sourceTextFile(id: string): string {
+	return path.join(PATHS.graph, "source-text", `${id}.md`);
+}
 /** The layout ledger (read-modify-write like sources.json): nodeId →
  *  {x,y} resting positions from the incremental settle (core/layout.ts).
  *  Carries an updatedAt stamp for future live-physics conflict handling. */

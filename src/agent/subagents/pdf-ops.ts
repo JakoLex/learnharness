@@ -182,10 +182,11 @@ async function loaderText(filePath: string): Promise<LoaderText> {
 		return { pages };
 	} catch (err) {
 		if (err instanceof DocLoaderUnavailableError || err instanceof DocLoaderFailedError) {
-			console.warn(`[pdf-ops] doc loader for ${path.basename(filePath)}: ${err.message}`);
+			console.warn(`[doc-loader] ${path.basename(filePath)}: PDF reader used pdf.js — ${err.message}`);
 			return { note: `the doc loader could not read this PDF (${err.message}) — pdf.js text layer; formulas and scanned pages may be missing` };
 		}
 		if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+			console.warn(`[doc-loader] ${path.basename(filePath)}: PDF reader used pdf.js — still converting after ${Math.round(docLoaderWait.ms / 1000)} s`);
 			return { note: "the doc loader is still reading this PDF and keeps going in the background — pdf.js text layer for now; formulas and scanned pages may be missing, a later call gets the doc loader's text" };
 		}
 		throw err;

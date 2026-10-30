@@ -4,8 +4,10 @@
 //    on the prober ONLY when the composition root passes a graphStore
 //    (the graphToolsEnabled gate lives server-side; absent store = closed
 //    gate — the factory must not reach for settings itself).
-// 2. OUTPUT: names only — the owner ruling bars statement text and session
-//    contents from the prober's view of the map.
+// 2. OUTPUT: list_sessions stays names + counts + dates; list_propositions
+//    carries the statements (fork, owner 2026-10-30 — the upstream
+//    names-only ruling is lifted here; tests/tutor-material.test.ts pins
+//    the chains, search_graph and read_source).
 // 3. HONESTY: empty graph, unknown session id — the tools answer in
 //    their own voice, never throw, never guess.
 
@@ -27,7 +29,7 @@ const node = (
 ): GraphNode => ({
 	id,
 	name,
-	statement: `statement of ${name}`, // must NEVER leak into tool output
+	statement: `statement of ${name}`, // never in list_sessions; list_propositions shows it (fork)
 	aliases: [],
 	createdAt: "2026-09-23T00:00:00.000Z",
 	provenance,
@@ -85,7 +87,7 @@ describe("prober graph tools — registration", () => {
 		assert.equal("list_propositions" in tools, false);
 	});
 
-	it("graphStore present → list_sessions + list_propositions join the registry beside the usual set", () => {
+	it("graphStore present → list_sessions + list_propositions + search_graph join the registry beside the usual set", () => {
 		const { chatStore, graphStore } = fakeStores([node("n1", "Water cycle", [pt("c1")])]);
 		const tools = createProberTools({ ...baseCtx, chatStore, graphStore });
 		// The standing set (fix wave 2026-09-20: research + pdf are
@@ -102,6 +104,7 @@ describe("prober graph tools — registration", () => {
 			"probe_done",
 			"read",
 			"research",
+			"search_graph",
 		]);
 	});
 });
@@ -147,7 +150,7 @@ describe("list_sessions", () => {
 });
 
 describe("list_propositions", () => {
-	it("names only — what the session covered (2026-09-27: no levels, no dating)", async () => {
+	it("names + statements — what the session covered (2026-09-27: no levels, no dating; fork 2026-10-30: statements)", async () => {
 		const { chatStore, graphStore } = fakeStores([
 			node("n1", "Water cycle", [pt("c1")]),
 			node("n2", "Evaporation", [pt("c1")]),
@@ -155,12 +158,11 @@ describe("list_propositions", () => {
 		const tools = createProberTools({ ...baseCtx, chatStore, graphStore });
 		const out = (await tools.list_propositions!.execute!("tc", { session: "c1" })).details as string;
 		assert.match(out, /2 proposition\(s\) covered in this session:/);
-		assert.match(out, /- Water cycle/);
-		assert.match(out, /- Evaporation/);
-		// The owner ruling: no levels, no dating, never the statement text.
+		assert.match(out, /- Water cycle \[n1\]: statement of Water cycle/);
+		assert.match(out, /- Evaporation \[n2\]: statement of Evaporation/);
+		// No levels, no dating.
 		assert.ok(!out.includes("as of"));
 		assert.ok(!out.includes("solid"));
-		assert.ok(!out.includes("statement of"));
 	});
 
 	it("no evaluation machinery at all — the covered list is the whole output", async () => {

@@ -184,6 +184,8 @@ describe("the source-derived segment list", () => {
 				"shared/20-question-tools.md",
 				"shared/25-confidence.md",
 				"shared/30-learner-files.md",
+				// Fork (owner, 2026-10-30): the map + material readers.
+				"shared/35-his-material.md",
 				"shared/40-formatting.md",
 			],
 		);

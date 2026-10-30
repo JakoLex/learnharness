@@ -101,6 +101,12 @@ export interface GraphStore {
 	upsertSource(source: NotesSource): void;
 	/** Every notes source record, by id order-insensitive. */
 	readSources(): NotesSource[];
+	/** Fork (owner, 2026-10-30): the text an import read, kept for
+	 *  `read_source` (config.sourceTextFile). Optional — test fakes and
+	 *  stores without it simply offer no source text. */
+	writeSourceText?(id: string, text: string): void;
+	/** The kept text of one source, or null when none was kept. */
+	readSourceText?(id: string): string | null;
 	/** Append one run's usage to a source record — idempotent per
 	 *  startedAt, mirroring ChatRecord.extractions. */
 	appendSourceUsage(id: string, entry: ExtractionRunUsage): void;
