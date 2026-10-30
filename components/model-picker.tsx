@@ -274,7 +274,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	};
 
 	return (
-		<div ref={containerRef} className="relative flex items-center gap-1.5" data-testid="model-control">
+		<div ref={containerRef} className="relative flex items-center gap-1.5 max-md:min-w-0" data-testid="model-control">
 			<Hint
 				label={effectiveId ? `${effectiveProvider ? `${effectiveProvider}:` : ""}${effectiveId}` : "Model selector"}
 				action="open-model-picker"
@@ -288,10 +288,11 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 				// Chrome look (owner, fix wave round 3): matches the graph
 				// view's floating top-right buttons (import notes, gear,
 				// coverage) — blurred, fuller opacity, shadowed — so the
-				// graph no longer bleeds through these pills.
-				className="flex items-center gap-1.5 rounded-full border bg-card/85 px-2.5 py-1 shadow-lg backdrop-blur transition-colors hover:border-border hover:bg-muted"
+				// graph no longer bleeds through these pills. Phone (fork, owner
+				// 2026-10-30): the name stays on one line and ends in "…".
+				className="flex items-center gap-1.5 rounded-full border bg-card/85 px-2.5 py-1 shadow-lg backdrop-blur transition-colors hover:border-border hover:bg-muted max-md:min-w-0"
 			>
-				<span className="text-card-foreground">{effectiveId ? prettyModel(effectiveId) : "—"}</span>
+				<span className="text-card-foreground max-md:truncate">{effectiveId ? prettyModel(effectiveId) : "—"}</span>
 				<span aria-hidden className="text-xs text-muted-foreground">▾</span>
 			</button>
 			</Hint>
@@ -317,7 +318,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 				// view's floating top-right buttons (import notes, gear,
 				// coverage) — blurred, fuller opacity, shadowed — so the
 				// graph no longer bleeds through these pills.
-				className="flex items-center gap-1.5 rounded-full border bg-card/85 px-2.5 py-1 shadow-lg backdrop-blur transition-colors hover:border-border hover:bg-muted"
+				className="flex items-center gap-1.5 rounded-full border bg-card/85 px-2.5 py-1 shadow-lg backdrop-blur transition-colors hover:border-border hover:bg-muted max-md:shrink-0"
 			>
 				{/* Just the level — the button reads like the model button reads
 				   the model name (owner, stats-control round 1). */}

@@ -16,10 +16,24 @@ export interface DockHeightMeasurements {
 	/** Null when collapsed, in chat mode, or showing malformed input. */
 	questionHeight: number | null;
 	questionPaddingHeight: number;
+	/** Upper bound for the whole dock (the phone cap below); absent = none. */
+	maxDockHeight?: number;
+}
+
+/** Fork (owner, 2026-10-30): on a phone (below 768px) the whole dock stops
+ *  at 60% of the screen height, so the conversation above stays in view;
+ *  the question area scrolls inside it and the answer row stays put. */
+const PHONE_QUERY = "(max-width: 767px)";
+const PHONE_DOCK_SHARE = 0.6;
+
+function phoneDockCap(): number | undefined {
+	if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
+	if (!window.matchMedia(PHONE_QUERY).matches) return undefined;
+	return Math.round(window.innerHeight * PHONE_DOCK_SHARE);
 }
 
 export function dockHeightBudget(m: DockHeightMeasurements) {
-	const available = Math.max(m.columnHeight - 32, 0);
+	const available = Math.min(Math.max(m.columnHeight - 32, 0), m.maxDockHeight ?? Infinity);
 	const viewportMaxHeight = Math.max(available - m.outsideHeight, 0);
 	const shellMaxHeight = Math.max(viewportMaxHeight - m.beforeShellHeight, 0);
 	const naturalHeight = m.beforeShellHeight + m.shellBorderHeight + m.contentHeight;
@@ -68,6 +82,7 @@ export function syncDockHeight(elements: DockHeightElements, expanded: boolean) 
 		questionPaddingHeight: questionStyle
 			? pixels(questionStyle.paddingTop) + pixels(questionStyle.paddingBottom)
 			: 0,
+		maxDockHeight: phoneDockCap(),
 	});
 	if (budget.questionMaxHeight === null) block.style.removeProperty("--dock-max-h");
 	else block.style.setProperty("--dock-max-h", budget.scrollWholeContent ? "none" : `${budget.questionMaxHeight}px`);

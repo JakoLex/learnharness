@@ -79,6 +79,7 @@ import { MenuShell } from "@/components/menu-shell.tsx";
 import { DeleteNodeDialog } from "@/components/delete-node-dialog.tsx";
 import { ChainTableOverlay } from "@/components/chain-table.tsx";
 import { Hint } from "@/components/ui/hint";
+import { cn } from "@/lib/utils";
 import {
 	ARROW_LENGTH_LADDER,
 	CHARGE_RANGE,
@@ -885,10 +886,16 @@ export function GraphChromeRow({
 	 *  2026-09-29). */
 	onOpenChains: () => void;
 }) {
+	// Phone bar (fork, owner 2026-10-30): below `md` the row is icons only
+	// and the search is a magnifier-sized box that widens while focused or
+	// holding a query. The input itself stays in the box, so a tap focuses
+	// it natively and iOS opens the keyboard.
+	const [searchFocused, setSearchFocused] = useState(false);
+	const searchWide = searchFocused || query !== "";
 	return (
 		<>
 			{!isEmpty && (
-				<div className="graph-chrome-fade-in w-56 min-w-0 shrink rounded-xl border bg-card/85 px-1 py-[3px] shadow-lg backdrop-blur">
+				<div className={cn("graph-chrome-fade-in w-56 min-w-0 shrink rounded-xl border bg-card/85 px-1 py-[3px] shadow-lg backdrop-blur", !searchWide && "max-md:w-9")}>
 					<Hint
 						// ⌘F focuses node search (surface-scoped registry action).
 						label="Search nodes"
@@ -896,7 +903,7 @@ export function GraphChromeRow({
 						side="bottom"
 					>
 					<div className="relative">
-						<SearchIcon className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+						<SearchIcon className={cn("pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground", !searchWide && "max-md:left-1.5")} />
 						<input
 							ref={searchInputRef}
 							value={query}
@@ -904,7 +911,9 @@ export function GraphChromeRow({
 							placeholder="Search nodes…"
 							aria-label="Search nodes"
 							spellCheck={false}
-							className="h-7 w-full rounded-lg border bg-background pl-8 text-xs outline-none placeholder:text-muted-foreground focus:border-ring"
+							onFocus={() => setSearchFocused(true)}
+							onBlur={() => setSearchFocused(false)}
+							className={cn("h-7 w-full rounded-lg border bg-background pl-8 text-xs outline-none placeholder:text-muted-foreground focus:border-ring", !searchWide && "max-md:border-0 max-md:bg-transparent max-md:pl-0 max-md:placeholder:text-transparent")}
 						/>
 					</div>
 					</Hint>
@@ -925,7 +934,7 @@ export function GraphChromeRow({
 							className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent"
 						>
 							<ListTreeIcon className="size-3" />
-							Chains
+							<span className="max-md:sr-only">Chains</span>
 						</button>
 					</Hint>
 				</div>
@@ -959,7 +968,7 @@ export function GraphChromeRow({
 					className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent disabled:opacity-50"
 				>
 						<UploadIcon className="size-3" />
-						{importing ? "Importing…" : "Import notes…"}
+						<span className="max-md:sr-only">{importing ? "Importing…" : "Import notes…"}</span>
 					</button>
 				</Hint>
 			</div>
@@ -1497,9 +1506,11 @@ export function GraphView({
 
 	// Feed #5 — physics tuning: rebuilds the live sim in place (drag pins
 	// survive; a mid-settle change re-anneals, the honest response). Same
-	// isEmpty dep as Feed #4 — see there.
+	// isEmpty dep as Feed #4 — see there. Fork (owner, 2026-10-30): only a
+	// change the user just made re-anneals; the mount and the server's
+	// copy apply quietly, so the graph opens still.
 	useEffect(() => {
-		rendererRef.current?.setPhysicsTuning(physicsTuning);
+		rendererRef.current?.setPhysicsTuning(physicsTuning, { reheat: userTouched.current });
 	}, [physicsTuning, isEmpty]);
 
 	// Position the detail card: below the clicked node, flipped above near
@@ -1543,7 +1554,7 @@ export function GraphView({
 				<div ref={containerRef} className="relative h-full w-full">
 					{/* THE single canvas: every layer (hulls, edges, nodes, both
 					    label systems, hover) draws into it, once per frame. */}
-					<canvas ref={canvasRef} className="block h-full w-full touch-none" />
+					<canvas ref={canvasRef} className="block h-full w-full touch-none select-none [-webkit-touch-callout:none]" />
 					{/* The context menu's anchor: a zero-size point at the
 					    right-click position (canvas-relative == container-relative,
 					    the canvas fills this div). */}

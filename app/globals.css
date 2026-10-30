@@ -261,6 +261,19 @@ body {
 	line-height: 1.25;
 }
 
+/* Fork (owner, 2026-10-30): iOS Safari zooms into any field under 16px on
+   focus and stays zoomed. On touch screens (no mouse) fields read at least
+   16px; display titles (.font-title) keep their size. Unlayered, so it
+   beats the text-xs/text-[11px] utilities. */
+@media (pointer: coarse) {
+	:is(input, textarea, select):not(.font-title, .lh-input) {
+		font-size: 16px;
+	}
+	.lh-input {
+		font-size: max(16px, var(--lh-prose-size));
+	}
+}
+
 /* Thin dark native scrollbar (app-wide): dark thumb, transparent track. */
 * {
 	scrollbar-width: thin;

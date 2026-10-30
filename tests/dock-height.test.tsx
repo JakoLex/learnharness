@@ -70,6 +70,13 @@ describe("dockHeightBudget — whole dock, not just its question", () => {
 		assert.equal(dockHeightBudget({ ...normal, questionHeight: null, contentHeight: 42 }).scrollWholeContent, false);
 		assert.equal(dockHeightBudget({ ...normal, questionHeight: null, contentHeight: 42, beforeShellHeight: 650 }).scrollWholeContent, true);
 	});
+	// Fork (owner, 2026-10-30): the phone cap bounds the whole dock.
+	it("a dock cap below the column shrinks only the question area; a larger one changes nothing", () => {
+		assert.deepEqual(dockHeightBudget({ ...normal, maxDockHeight: 506 }), {
+			viewportMaxHeight: 446, shellMaxHeight: 446, questionMaxHeight: 244, scrollWholeContent: false,
+		});
+		assert.deepEqual(dockHeightBudget({ ...normal, maxDockHeight: 900 }), dockHeightBudget(normal));
+	});
 });
 
 // These mocked dimensions test the DOM/lifecycle seam, not real CSS layout.
@@ -127,6 +134,24 @@ async function withFixture(run: (host: HTMLElement, render: (props?: React.Compo
 const part = (host: HTMLElement, name: string) => host.querySelector<HTMLElement>(`[data-part="${name}"]`)!;
 
 describe("measured question/practice DOM and observer lifecycle", () => {
+	// Fork (owner, 2026-10-30): below 768px the dock stops at 60% of the
+	// screen height (844px phone → 506px dock → 244px question area).
+	it("caps the whole dock at 60% of the screen on a phone, and only there", async () => {
+		const win = dom.window as unknown as { matchMedia?: (q: string) => { matches: boolean } };
+		const saved = win.matchMedia;
+		Object.defineProperty(dom.window, "innerHeight", { configurable: true, value: 844 });
+		try {
+			for (const [phone, expected] of [[true, "244px"], [false, "406px"]] as const) {
+				win.matchMedia = (q) => ({ matches: phone && q === "(max-width: 767px)" });
+				await withFixture(async (host, render) => {
+					await render();
+					assert.equal(part(host, "block").style.getPropertyValue("--dock-max-h"), expected);
+				});
+			}
+		} finally {
+			win.matchMedia = saved;
+		}
+	});
 	it("applies constraints before the morph layout effect and handles classic scrollbar insets", async () => {
 		await withFixture(async (host, render) => {
 			await render({ inspected: block => assert.equal(block.style.getPropertyValue("--dock-max-h"), "406px") });

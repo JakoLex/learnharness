@@ -53,6 +53,7 @@ const STORAGE_KEY = "lh:sidebar-open";
 import type { ChatGPTControlBridge, NativeSubscriptionControlBridge } from "@/src/core";
 import type { UpdateState } from "@/components/settings/update-settings.tsx";
 import { FilePathDropZone } from "@/components/file-path-drop-zone";
+import { useLongPress } from "@/components/long-press";
 const SIDEBAR_AUTOCLOSE = 928;
 
 // Module scope, guarded for SSR (the server has no navigator).
@@ -86,9 +87,27 @@ declare global {
 	}
 }
 
-const SidebarContext = createContext<{ open: boolean; toggle: () => void }>({
+/*
+ * Phone drawer (fork, owner 2026-10-30): below PHONE_QUERY — Tailwind's
+ * `md` breakpoint, the same 48rem the `max-md:` classes use — the sidebar
+ * is an overlay drawer: closed on load, over the content with a dim
+ * backdrop, closed by a backdrop tap or by navigating. Its open state is
+ * NOT persisted, so the desktop preference (STORAGE_KEY) stays untouched.
+ */
+const PHONE_QUERY = "(width < 48rem)";
+
+/** Whether the sidebar shows: the drawer's own state on a phone, else the
+ *  persisted preference unless an Electron window is too narrow. Pure —
+ *  exported for tests. */
+export function sidebarShown(state: { drawer: boolean; drawerOpen: boolean; pref: boolean; narrow: boolean }): boolean {
+	return state.drawer ? state.drawerOpen : state.pref && !state.narrow;
+}
+
+const SidebarContext = createContext<{ open: boolean; toggle: () => void; drawer: boolean; close: () => void }>({
 	open: false,
 	toggle: () => {},
+	drawer: false,
+	close: () => {},
 });
 
 export function useSidebar() {
@@ -108,6 +127,23 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	const [open, setOpen] = useState(false);
 	const [narrow, setNarrow] = useState(false);
 	const [mounted, setMounted] = useState(false);
+	const [drawer, setDrawer] = useState(false);
+	const [drawerOpen, setDrawerOpen] = useState(false);
+
+	// The phone drawer's switch (see PHONE_QUERY): crossing the breakpoint
+	// starts the drawer closed again. The desktop shell keeps its own
+	// narrow-window rule (SIDEBAR_AUTOCLOSE) — its floor is 640px.
+	useEffect(() => {
+		if (IS_ELECTRON || typeof window.matchMedia !== "function") return;
+		const query = window.matchMedia(PHONE_QUERY);
+		const onChange = () => {
+			setDrawer(query.matches);
+			setDrawerOpen(false);
+		};
+		onChange();
+		query.addEventListener("change", onChange);
+		return () => query.removeEventListener("change", onChange);
+	}, []);
 
 	useEffect(() => {
 		// Electron shell detection (merged chrome, 2026-09-17): keys the
@@ -150,6 +186,10 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	}, []);
 
 	const toggle = useCallback(() => {
+		if (drawer) {
+			setDrawerOpen((v) => !v);
+			return;
+		}
 		// Opening while narrow (auto-closed, or the user's own closed-at-
 		// narrow): ask the shell to widen to the threshold — the resize
 		// listener flips `narrow` and the sidebar appears. The preference
@@ -165,7 +205,8 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 			localStorage.setItem(STORAGE_KEY, v ? "0" : "1");
 			return !v;
 		});
-	}, [narrow, open]);
+	}, [drawer, narrow, open]);
+	const close = useCallback(() => setDrawerOpen(false), []);
 
 	// ⌘B: the global shortcut dispatches kbdEventForAction("toggle-sidebar")
 	// and the context answers on exactly that name — the shared spelling
@@ -181,7 +222,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	}, [toggle]);
 
 	return (
-		<SidebarContext.Provider value={{ open: open && !narrow, toggle }}>
+		<SidebarContext.Provider value={{ open: sidebarShown({ drawer, drawerOpen, pref: open, narrow }), toggle, drawer, close }}>
 			{/* transitions gated on mount: no slide-in flash on page load */}
 			<div className={cn("flex h-dvh", mounted && "[&_.sidebar-motion]:transition-[width,margin,opacity]")}>{children}</div>
 		</SidebarContext.Provider>
@@ -293,6 +334,7 @@ export function SessionRow({
 	onOpen,
 	kbdSelected = false,
 	onContextMenu,
+	onLongPress,
 }: {
 	chat: ChatListItem;
 	active: boolean;
@@ -302,15 +344,23 @@ export function SessionRow({
 	kbdSelected?: boolean;
 	/** Right-click opens the context menu (wave 6: Rename / Delete). */
 	onContextMenu?: (e: React.MouseEvent<HTMLButtonElement>) => void;
+	/** A touch long press opens the same menu (fork, owner 2026-10-30 —
+	 *  iOS has no contextmenu event); gets the row as the menu's anchor. */
+	onLongPress?: (row: HTMLButtonElement) => void;
 }) {
+	const longPress = useLongPress<HTMLButtonElement>(onLongPress);
 	return (
 		<button
 			type="button"
 			onClick={onOpen}
-			onContextMenu={onContextMenu}
+			{...longPress.handlers}
+			onContextMenu={(e) => {
+				longPress.cancel(); // Android's own long-press menu wins
+				onContextMenu?.(e);
+			}}
 			data-testid={kbdSelected ? "session-row-kbd" : "session-row"}
 			className={cn(
-				"relative mb-0.5 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent",
+				"relative mb-0.5 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors select-none [-webkit-touch-callout:none] hover:bg-accent",
 				active && "bg-accent",
 				kbdSelected && !active && "bg-accent/60 ring-1 ring-border",
 			)}
@@ -392,7 +442,7 @@ export type SessionKindFilter = "teach" | "all" | "practice";
 const KIND_FILTER_KEY = "lh:session-kind-filter";
 
 function SessionsSidebar() {
-	const { open, toggle } = useSidebar();
+	const { open, toggle, drawer, close } = useSidebar();
 	const [chats, setChats] = useState<ChatListItem[] | null>(null);
 	const [query, setQuery] = useState("");
 	const [kindFilter, setKindFilter] = useState<SessionKindFilter>("all");
@@ -555,10 +605,13 @@ function SessionsSidebar() {
 	const [renamingId, setRenamingId] = useState<string | null>(null);
 	const [deleting, setDeleting] = useState<ChatListItem | null>(null);
 
+	const openMenu = (anchor: HTMLButtonElement, chat: ChatListItem) => {
+		ctxAnchorRef.current = anchor;
+		setCtxChatId(chat.id);
+	};
 	const openContext = (e: React.MouseEvent<HTMLButtonElement>, chat: ChatListItem) => {
 		e.preventDefault(); // suppress the native menu
-		ctxAnchorRef.current = e.currentTarget;
-		setCtxChatId(chat.id);
+		openMenu(e.currentTarget, chat);
 	};
 
 	// The menu contract (agent-section's): any pointerdown outside the menu
@@ -642,6 +695,12 @@ function SessionsSidebar() {
 		listRef.current?.querySelectorAll("button")[kbdIndex]?.scrollIntoView({ block: "nearest" });
 	}, [kbdIndex]);
 
+	// The phone drawer closes on navigation — picking a session or page
+	// is the end of its job (see PHONE_QUERY).
+	useEffect(() => {
+		if (drawer) close();
+	}, [pathname, drawer, close]);
+
 	useEffect(() => {
 		if (!open) return;
 		void refresh();
@@ -650,11 +709,26 @@ function SessionsSidebar() {
 	}, [open, pathname, refresh]);
 
 	return (
+		<>
+		{/* Phone drawer backdrop (see PHONE_QUERY): dims the page, a tap closes. */}
+		{drawer && (
+			<div
+				aria-hidden="true"
+				data-testid="sidebar-backdrop"
+				onClick={close}
+				className={cn("fixed inset-0 z-40 bg-black/50 transition-opacity duration-200", open ? "opacity-100" : "pointer-events-none opacity-0")}
+			/>
+		)}
 		<aside
-			className={cn("sidebar-motion shrink-0 overflow-hidden duration-200", open ? "w-72" : "w-0")}
+			className={cn(
+				"sidebar-motion shrink-0 overflow-hidden duration-200",
+				open ? "w-72" : "w-0",
+				// Phone drawer: over the content instead of beside it.
+				drawer && "fixed inset-y-0 left-0 z-50 max-w-[85vw]",
+			)}
 			aria-hidden={!open}
 		>
-			<div className="flex h-full w-72 flex-col border-r bg-background">
+			<div className={cn("flex h-full w-72 flex-col border-r bg-background", drawer && "shadow-xl")}>
 				{/* LH wordmark — the owner's header; close toggle sits at the edge.
 				    Merged chrome (2026-09-17): in Electron this band is the
 				    window's drag surface and starts after the traffic lights
@@ -855,6 +929,7 @@ function SessionsSidebar() {
 										router.push(projectPath(`/chat/${c.id}`));
 									}}
 									onContextMenu={(e) => openContext(e, c)}
+									onLongPress={(row) => openMenu(row, c)}
 								/>
 							),
 						)
@@ -961,6 +1036,7 @@ function SessionsSidebar() {
 					onDeleted={onDeleted}
 				/>
 			</aside>
+		</>
 	);
 }
 

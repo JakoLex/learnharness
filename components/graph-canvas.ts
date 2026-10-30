@@ -55,6 +55,7 @@ import { select } from "d3-selection";
 import { zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from "d3-zoom";
 import type { Simulation, SimulationLinkDatum } from "d3-force";
 import { clusterHue, type Pt } from "./cluster-geometry.ts";
+import { createLongPress } from "./long-press.ts";
 import {
 	CHARGE_STRENGTH,
 	CLUSTER_PULL_STRENGTH,
@@ -312,6 +313,8 @@ const PICKING_PAD = 10;
 
 /** Click vs drag threshold: pointer travel under this many px is a click. */
 const CLICK_SLOP = 4;
+/** The same for a finger (fork, owner 2026-10-30): a tap wobbles more. */
+const TOUCH_TAP_SLOP = 10;
 /** Live-sim tuning — see the class doc comment. */
 const LIVE_ALPHA_DECAY = 0.05; // snappier anneal than the settle's 0.0228
 const DRAG_ALPHA_TARGET = 0.3; // d3-drag's own reheat constant
@@ -627,6 +630,31 @@ export function anyInView(points: readonly Pt[], view: WorldView, pad = 0): bool
 	);
 }
 
+/** Whether a node's name block (drawNameLines' geometry: centered under
+ *  the disc) can reach into `view`. Fork (owner, 2026-10-30): the label
+ *  pass skips the rest — the iPad paid one fillText per node per frame.
+ *  The half-width is the full wrap width, so an over-long word still
+ *  counts as in view. */
+export function labelInView(
+	x: number,
+	y: number,
+	lineCount: number,
+	view: WorldView,
+	world: { nodeR: number; labelGap: number; labelSize: number },
+	wrapWidth: number,
+): boolean {
+	const bottom = y + world.nodeR + world.labelGap + lineCount * world.labelSize * LABEL_LINE_HEIGHT;
+	return x + wrapWidth >= view.minX && x - wrapWidth <= view.maxX && bottom >= view.minY && y - world.nodeR <= view.maxY;
+}
+
+/** Same physics values (fork, owner 2026-10-30): the mount and the
+ *  server's settings load hand the renderer equal tuning — no change, so
+ *  no re-anneal. */
+export function samePhysicsTuning(a: PhysicsTuning, b: PhysicsTuning): boolean {
+	const keys = Object.keys(a) as (keyof PhysicsTuning)[];
+	return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
+}
+
 /** Bridges per pair of clusters (unordered), for the zoomed-out bundles.
  *  Each bridge counts once, under the cluster of its first foreign premise
  *  and the cluster of its conclusion; bridges whose ends share a cluster or
@@ -917,6 +945,27 @@ export class GraphCanvasRenderer {
 	private regionBuiltVersion = -1;
 	private frameCount = 0; // draw counter for the live-sim splat throttle
 	private labelLines = new Map<string, string[]>();
+	/** Wrapped names by node, reused while the label, font and wrap width
+	 *  stay (fork, 2026-10-30): a live-sim frame rebuilds geometry, but
+	 *  moving a node never changes its name's lines — no measureText then. */
+	private wrapCache = { key: "", byId: new Map<string, { label: string; lines: string[] }>() };
+	private labelWrapWidth = 0;
+	/** The bridge layer's two alpha groups, kept while the geometry and
+	 *  the set of on-screen bridges stay the same (fork, 2026-10-30). */
+	private bridgeGroups: { version: number; key: string; groups: { shafts: Path2D; shared: Path2D; heads: Path2D }[] } | null = null;
+	/** Touch long press → the node's menu (fork, owner 2026-10-30). Client
+	 *  coordinates; the fire converts to canvas space and picks there. */
+	private longPress = createLongPress((at) => {
+		const pos = this.eventPos({ clientX: at.x, clientY: at.y });
+		const node = this.pickAt(pos.x, pos.y);
+		if (!node) return;
+		this.downPos = null; // the lift is not a tap
+		this.menuHold = true;
+		this.callbacks.onContext(node.id, pos);
+	});
+	/** Set while the finger that opened the menu is still down: its wobble
+	 *  on the way up must not pan — any camera move closes the menu. */
+	private menuHold = false;
 	private worldLabelFont = "";
 	private world: WorldSizes = { nodeR: 0, glowOuter: 0, labelSize: 0, labelGap: 0 };
 
@@ -945,6 +994,9 @@ export class GraphCanvasRenderer {
 				// The transform doubles as the persistence payload (view state).
 				this.callbacks.onCameraMove(transform);
 			});
+		// Registered BEFORE d3-zoom's own touch listeners, so it runs first
+		// and can keep a menu-holding finger from panning (see menuHold).
+		canvas.addEventListener("touchmove", this.onTouchMoveFirst, { capture: true, passive: true });
 		select(canvas)
 			.call(this.zoomBehavior)
 			// No surprise dblclick-zoom (sigma had none).
@@ -958,6 +1010,7 @@ export class GraphCanvasRenderer {
 		canvas.addEventListener("pointerdown", this.onPointerDown);
 		canvas.addEventListener("pointerup", this.onPointerUp);
 		canvas.addEventListener("pointerleave", this.onPointerLeave);
+		canvas.addEventListener("pointercancel", this.onPointerCancel);
 		// Right-click → the caller's context menu (node interlude). Always
 		// preventDefault: the native menu on a full-bleed custom canvas is
 		// never useful; the caller decides what (if anything) opens.
@@ -1077,14 +1130,21 @@ export class GraphCanvasRenderer {
 	 *  survive; velocities restart clean, which reads as "re-relax with
 	 *  the new feel"). A mid-settle change re-anneals, which is the
 	 *  honest response to new physics. */
-	setPhysicsTuning(input: Partial<PhysicsTuning>): void {
-		this.physicsTuning = sanitizePhysicsTuning(input);
+	setPhysicsTuning(input: Partial<PhysicsTuning>, options: { reheat?: boolean } = {}): void {
+		const next = sanitizePhysicsTuning(input);
+		// Fork (owner, 2026-10-30): equal values are no change. The mount
+		// and the server's settings load re-annealed the whole graph on
+		// every open (~100 frames of geometry rebuilds).
+		if (samePhysicsTuning(next, this.physicsTuning)) return;
+		this.physicsTuning = next;
 		this.buildSim();
 		// Reheat: a tuning change re-anneals the layout from its current
 		// state, so mode toggles (off/vertical/radial) visibly RE-FORM the
 		// graph instead of waiting for the next drag. Mid-drag is safe —
-		// buildSim preserved the pinned node's fx/fy.
-		if (this.sim) {
+		// buildSim preserved the pinned node's fx/fy. The caller passes
+		// reheat: false for tuning the user did not just change (the
+		// server's copy): it applies from the next drag on.
+		if (this.sim && options.reheat !== false) {
 			this.sim.alpha(1);
 			this.simActive = true;
 		}
@@ -1173,7 +1233,10 @@ export class GraphCanvasRenderer {
 		this.canvas.removeEventListener("pointerdown", this.onPointerDown);
 		this.canvas.removeEventListener("pointerup", this.onPointerUp);
 		this.canvas.removeEventListener("pointerleave", this.onPointerLeave);
+		this.canvas.removeEventListener("pointercancel", this.onPointerCancel);
+		this.canvas.removeEventListener("touchmove", this.onTouchMoveFirst, { capture: true });
 		this.canvas.removeEventListener("contextmenu", this.onContextMenu);
+		this.longPress.cancel();
 		this.canvas.style.cursor = "";
 	}
 
@@ -1195,6 +1258,11 @@ export class GraphCanvasRenderer {
 	};
 
 	private onPointerMove = (e: PointerEvent) => {
+		// Touch: no hover and no pick per move — the finger is panning.
+		if (e.pointerType === "touch") {
+			this.longPress.move(e.pointerId, { x: e.clientX, y: e.clientY });
+			return;
+		}
 		const pos = this.eventPos(e);
 		if (this.dragId) {
 			const n = this.simById.get(this.dragId);
@@ -1231,6 +1299,22 @@ export class GraphCanvasRenderer {
 	};
 
 	private onPointerDown = (e: PointerEvent) => {
+		// Touch (fork, owner 2026-10-30): one finger always pans (d3-zoom's
+		// own touch handling), two pinch, a tap selects, a long press opens
+		// the node's menu. A finger never drags a node — the drag reheated
+		// the live sim on every pan that started near one (the iPad
+		// stutter). Mouse, trackpad and pen keep the drag below.
+		if (e.pointerType === "touch") {
+			this.longPress.cancel();
+			if (!e.isPrimary) {
+				this.downPos = null; // a pinch is no tap
+				return;
+			}
+			this.downPos = this.eventPos(e);
+			this.zoomTarget = null;
+			this.longPress.down(e.pointerId, { x: e.clientX, y: e.clientY });
+			return;
+		}
 		// Primary button only (owner, polish round): a right-press must not
 		// pin the node — right-click belongs to the context menu alone, and
 		// the right-pointerup must never read as a click (the detail card
@@ -1266,6 +1350,12 @@ export class GraphCanvasRenderer {
 	};
 
 	private onPointerUp = (e: PointerEvent) => {
+		const touch = e.pointerType === "touch";
+		if (touch) {
+			this.longPress.cancel();
+			this.menuHold = false;
+			if (this.longPress.consumeFired()) return; // the menu took the press
+		}
 		if (e.button !== 0) return; // right-click is context-menu territory
 		// Node press ending: click (no slop) → select; drag → release-and-relax.
 		if (this.dragId) {
@@ -1298,7 +1388,7 @@ export class GraphCanvasRenderer {
 		const pos = this.eventPos(e);
 		const moved = Math.hypot(pos.x - this.downPos.x, pos.y - this.downPos.y);
 		this.downPos = null;
-		if (moved > CLICK_SLOP) return; // that was a drag (pan), not a click
+		if (moved > (touch ? TOUCH_TAP_SLOP : CLICK_SLOP)) return; // that was a drag (pan), not a click
 		const node = this.pickAt(pos.x, pos.y);
 		if (node) this.callbacks.onSelect(node.id, pos);
 		else this.callbacks.onStageClick();
@@ -1308,9 +1398,23 @@ export class GraphCanvasRenderer {
 	 *  the caller (empty stage = null — the caller closes any open menu). */
 	private onContextMenu = (e: MouseEvent) => {
 		e.preventDefault();
+		// Android's own long press lands here: it is the only menu, and the
+		// lift after it is no tap.
+		this.longPress.cancel();
+		this.downPos = null;
 		const pos = this.eventPos(e);
 		const node = this.pickAt(pos.x, pos.y);
 		this.callbacks.onContext(node?.id ?? null, pos);
+	};
+
+	private onPointerCancel = () => {
+		this.longPress.cancel();
+		this.menuHold = false;
+		this.downPos = null;
+	};
+
+	private onTouchMoveFirst = (e: TouchEvent) => {
+		if (this.menuHold) e.stopImmediatePropagation();
 	};
 
 	private onPointerLeave = () => {
@@ -1573,8 +1677,18 @@ export class GraphCanvasRenderer {
 		const prevFont = ctx.font;
 		ctx.font = this.worldLabelFont;
 		const maxW = LABEL_MAX_WIDTH * (settings.labelSize / LABEL_SIZE);
+		this.labelWrapWidth = maxW;
+		const wrapKey = `${this.worldLabelFont}|${maxW}`;
+		if (this.wrapCache.key !== wrapKey) this.wrapCache = { key: wrapKey, byId: new Map() };
 		for (const n of data.nodes) {
-			if (isVisible(n.id) && !isImpNodeId(n.id)) this.labelLines.set(n.id, wrapLabel(ctx, n.label, maxW));
+			if (!isVisible(n.id) || isImpNodeId(n.id)) continue;
+			const cached = this.wrapCache.byId.get(n.id);
+			let lines = cached?.label === n.label ? cached.lines : null;
+			if (!lines) {
+				lines = wrapLabel(ctx, n.label, maxW);
+				this.wrapCache.byId.set(n.id, { label: n.label, lines });
+			}
+			this.labelLines.set(n.id, lines);
 		}
 		ctx.font = prevFont;
 	}
@@ -2129,18 +2243,23 @@ export class GraphCanvasRenderer {
 			// nodes is on screen draws at BRIDGE_DETACHED_SHARE of the alpha.
 			const view = worldView(this.transform, w, h);
 			const detachedAlpha = BRIDGE_DETACHED_SHARE * (BRIDGE_ALPHA_OUT + (BRIDGE_ALPHA_IN - BRIDGE_ALPHA_OUT) * nodeAlpha);
-			const groups = [
-				{ alpha: BRIDGE_ALPHA_OUT + (BRIDGE_ALPHA_SHOWN - BRIDGE_ALPHA_OUT) * nodeAlpha, shafts: new Path2D(), shared: new Path2D(), heads: new Path2D() },
-				{ alpha: detachedAlpha, shafts: new Path2D(), shared: new Path2D(), heads: new Path2D() },
-			];
-			for (const part of this.bridgeParts) {
-				const group = groups[anyInView(part.nodes, view, this.world.nodeR) ? 0 : 1]!;
-				group.shafts.addPath(part.shafts);
-				group.shared.addPath(part.shared);
-				group.heads.addPath(part.heads);
+			const alphas = [BRIDGE_ALPHA_OUT + (BRIDGE_ALPHA_SHOWN - BRIDGE_ALPHA_OUT) * nodeAlpha, detachedAlpha];
+			// The grouped paths are rebuilt only when the geometry or the set
+			// of on-screen bridges changed — a plain pan reuses them.
+			const inView = this.bridgeParts.map((part) => anyInView(part.nodes, view, this.world.nodeR));
+			const key = inView.map((on) => (on ? "1" : "0")).join("");
+			if (!this.bridgeGroups || this.bridgeGroups.version !== this.builtVersion || this.bridgeGroups.key !== key) {
+				const groups = [0, 1].map(() => ({ shafts: new Path2D(), shared: new Path2D(), heads: new Path2D() }));
+				this.bridgeParts.forEach((part, i) => {
+					const group = groups[inView[i] ? 0 : 1]!;
+					group.shafts.addPath(part.shafts);
+					group.shared.addPath(part.shared);
+					group.heads.addPath(part.heads);
+				});
+				this.bridgeGroups = { version: this.builtVersion, key, groups };
 			}
-			for (const group of groups) {
-				ctx.globalAlpha = group.alpha;
+			for (const [i, group] of this.bridgeGroups.groups.entries()) {
+				ctx.globalAlpha = alphas[i]!;
 				ctx.lineCap = dashCap;
 				ctx.setLineDash([6 / k, 4 / k]);
 				ctx.stroke(group.shafts);
@@ -2181,9 +2300,10 @@ export class GraphCanvasRenderer {
 			ctx.save();
 			ctx.globalAlpha = nodeAlpha;
 			ctx.font = this.worldLabelFont;
+			const view = worldView(this.transform, w, h);
 			for (const [id, lines] of this.labelLines) {
 				const n = this.nodeById.get(id);
-				if (!n) continue;
+				if (!n || !labelInView(n.x, n.y, lines.length, view, this.world, this.labelWrapWidth)) continue;
 				drawNameLines(ctx, n.x, n.y, lines, this.world, data.colors.label);
 			}
 			ctx.restore();
