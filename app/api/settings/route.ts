@@ -14,12 +14,13 @@
  * (core/settings-resolution.ts resolveSettings — browser-safe).
  */
 
-import { settingsStore, scoped } from "@/src/server";
+import { settingsStore, fileAccessConfigurationError, scoped } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
 async function GETHandler() {
-	return Response.json({ settings: settingsStore.readSettings() });
+	const fileAccessError = fileAccessConfigurationError();
+	return Response.json({ settings: settingsStore.readSettings(), ...(fileAccessError ? { fileAccessError } : {}) });
 }
 
 export const GET = scoped(GETHandler, { project: "none" });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState, type ReactNode } from "react";
-import { CLAUDE_CODE_PROVIDER, subscriptionLabels, type cliContextWindowOf, type LhMessage, type SessionPricing, type TurnUsage } from "@/src/core";
+import { CLAUDE_CODE_PROVIDER, sessionCacheHitRate, subscriptionLabels, type cliContextWindowOf, type LhMessage, type SessionPricing, type TurnUsage } from "@/src/core";
 import { formatTokens, planCostLabel } from "@/components/usage-format";
 import { ModelControl, catalogLimits, useModelCatalog } from "@/components/model-picker";
 import { ContextDialog } from "@/components/context-dialog";
@@ -91,6 +91,7 @@ export function StatsBar({
 	const limits = useMemo(() => (catalog ? catalogLimits(catalog) : undefined), [catalog]);
 	const limit = contextLimitForModel(selectedModel, limits, cliContextWindow);
 	const contextLabel = formatContextMeasurement(contextTokens, limit);
+	const cacheHitRate = useMemo(() => sessionCacheHitRate({ turns }), [turns]);
 	const { cost = 0, unpriced = turns.length, subscription = 0 } = pricing ?? {};
 	// Honest cost: show dollars only when at least one turn priced;
 	// otherwise "—" (never a fake $0.0000).
@@ -142,6 +143,7 @@ export function StatsBar({
 						createdAt={createdAt}
 						costLabel={costLabel}
 						unpriced={unpriced}
+						cacheHitRate={cacheHitRate}
 						subscription={subscription}
 						providers={providers}
 						cliWindow={selectedModel?.startsWith(`${CLAUDE_CODE_PROVIDER}:`) ?? false}

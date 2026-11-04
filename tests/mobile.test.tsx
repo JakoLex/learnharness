@@ -119,7 +119,6 @@ describe("GraphChromeRow — icon-only below md", () => {
 		noMatch: false,
 		importing: false,
 		searchInputRef: { current: null },
-		fileInputRef: { current: null },
 		onImportFiles: () => {},
 		settings: {} as GraphRenderSettings,
 		changeSettings: () => {},
@@ -128,7 +127,7 @@ describe("GraphChromeRow — icon-only below md", () => {
 	it("the labels stay for screen readers, hidden on a phone", () => {
 		const html = renderToStaticMarkup(createElement(GraphChromeRow, PROPS));
 		assert.ok(html.includes('<span class="max-md:sr-only">Chains</span>'));
-		assert.ok(html.includes('<span class="max-md:sr-only">Import notes…</span>'));
+		assert.ok(html.includes('<span class="max-md:sr-only">Extract files…</span>'));
 	});
 	it("the search is magnifier-sized until it holds a query", () => {
 		assert.ok(renderToStaticMarkup(createElement(GraphChromeRow, PROPS)).includes("max-md:w-9"));

@@ -137,6 +137,9 @@ interface ContextDialogData {
 	/** The stats bar's honest cost label ("—" when nothing priced). */
 	costLabel: string;
 	unpriced: number;
+	/** Observed prompt-cache hit rate over the session's turns (null: none
+	 *  reported) — upstream's stats-popover row, here in the Session card. */
+	cacheHitRate?: number | null;
 	/** Subscription-billed turns (plan usage, not API dollars). */
 	subscription: number;
 	providers: readonly string[];
@@ -186,6 +189,7 @@ export function ContextDialogBody({
 	createdAt,
 	costLabel,
 	unpriced,
+	cacheHitRate = null,
 	subscription,
 	providers,
 	cliWindow = false,
@@ -337,6 +341,12 @@ export function ContextDialogBody({
 							<>
 								<dt className="text-muted-foreground">Unpriced turns</dt>
 								<dd className="text-right tabular-nums">{NUMBER.format(unpriced)}</dd>
+							</>
+						)}
+						{cacheHitRate !== null && (
+							<>
+								<dt className="text-muted-foreground">Cache hit rate</dt>
+								<dd data-testid="stats-cache-hit-rate" className="text-right tabular-nums">{(cacheHitRate * 100).toFixed(1)}%</dd>
 							</>
 						)}
 						<dt className="text-muted-foreground">Session created</dt>

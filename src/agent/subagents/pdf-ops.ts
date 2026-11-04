@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { convertDocument, docLoaderConfigured, DocLoaderFailedError, DocLoaderUnavailableError } from "../doc-loader.ts";
+import { documentToMarkdown, type PdfPage } from "./pdf-markdown.ts";
 
 /**
  * PDF plumbing for the pdf-reader sub-agent — sources v0 (2026-09): Node
@@ -9,6 +10,8 @@ import { convertDocument, docLoaderConfigured, DocLoaderFailedError, DocLoaderUn
  * pdf_search / pdf_render), on the user-chosen hybrid stack:
  *
  * - TEXT (info / extract / search): pdfjs-dist — pure JS, no native deps.
+ *   extract and search read pdf-markdown's Markdown, so words and lines
+ *   survive (the raw text items glued "lecture" + "Plants").
  * - RENDER: subagents/headless.ts uses the same pdfjs engine with
  *   @napi-rs/canvas (Skia), in-process — no browser needed.
  *
@@ -54,8 +57,11 @@ export function standardFontsDir(): string {
 }
 
 async function openDocument(filePath: string) {
+	return openBytes(new Uint8Array(await fs.readFile(filePath)));
+}
+
+async function openBytes(data: Uint8Array) {
 	const pdfjs = await loadPdfjs();
-	const data = new Uint8Array(await fs.readFile(filePath));
 	// The legacy build in plain node runs on a main-thread fake worker (no
 	// workerSrc needed); teardown is the loading task's destroy().
 	// verbosity 0 = errors only — scanned PDFs (JBIG2 XObjects) otherwise
@@ -183,56 +189,64 @@ async function loaderText(filePath: string): Promise<LoaderText> {
 	} catch (err) {
 		if (err instanceof DocLoaderUnavailableError || err instanceof DocLoaderFailedError) {
 			console.warn(`[doc-loader] ${path.basename(filePath)}: PDF reader used pdf.js — ${err.message}`);
-			return { note: `the doc loader could not read this PDF (${err.message}) — pdf.js text layer; formulas and scanned pages may be missing` };
+			return { note: `the doc loader could not read this PDF (${err.message}) — pdf.js Markdown; formulas may be garbled and scanned pages missing` };
 		}
 		if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
 			console.warn(`[doc-loader] ${path.basename(filePath)}: PDF reader used pdf.js — still converting after ${Math.round(docLoaderWait.ms / 1000)} s`);
-			return { note: "the doc loader is still reading this PDF and keeps going in the background — pdf.js text layer for now; formulas and scanned pages may be missing, a later call gets the doc loader's text" };
+			return { note: "the doc loader is still reading this PDF and keeps going in the background — pdf.js Markdown for now; formulas may be garbled and scanned pages missing, a later call gets the doc loader's text" };
 		}
 		throw err;
 	}
 }
 
-/** The pdf.js text layer of every page, `--- Page N ---` headed — no doc
- *  loader (the notes import's fallback when the loader cannot answer). */
-export async function pdfTextLayer(filePath: string): Promise<string> {
-	const { doc, task } = await openDocument(filePath);
+export type PdfConversion =
+	| { kind: "converted"; pages: PdfPage[] }
+	| { kind: "too-long"; pageCount: number }
+	/** Broken, encrypted, or not a PDF at all: pdfjs could not read it. */
+	| { kind: "unreadable" };
+
+/** An uploaded PDF's pages as Markdown (the notes import's door). The page
+ *  cap is checked before any page is read. */
+export async function convertPdf(data: Uint8Array, maxPages: number): Promise<PdfConversion> {
+	let opened: Awaited<ReturnType<typeof openBytes>>;
 	try {
-		const out: string[] = [];
-		for (let i = 1; i <= doc.numPages; i++) {
-			const content = await (await doc.getPage(i)).getTextContent();
-			out.push(`--- Page ${i} ---`, itemsToText(content.items as unknown[]), "");
-		}
-		return out.join("\n").trim();
+		opened = await openBytes(data);
+	} catch {
+		return { kind: "unreadable" };
+	}
+	try {
+		if (opened.doc.numPages > maxPages) return { kind: "too-long", pageCount: opened.doc.numPages };
+		return { kind: "converted", pages: await documentToMarkdown(opened.doc) };
+	} catch {
+		return { kind: "unreadable" };
 	} finally {
-		await task.destroy();
+		await opened.task.destroy();
 	}
 }
 
-/** pdf_extract: text of the requested pages, `--- Page N ---` headed —
+/** A page's Markdown, or "" for a page with no text (the agent renders those). */
+function pageMarkdown(page: PdfPage): string {
+	return page.kind === "text" ? page.markdown : "";
+}
+
+/** pdf_extract: Markdown of the requested pages, `--- Page N ---` headed —
  *  from the doc loader (Markdown, LaTeX) when it answers, else pdf.js. */
 export async function pdfExtract(filePath: string, pageSpec: string): Promise<string> {
 	const { doc } = await openDocument(filePath);
 	const pages = parsePageSpec(pageSpec, doc.numPages);
 	if (pages.length === 0) return "No pages selected — page spec matched nothing.";
 	const loader = await loaderText(filePath);
-	const out: string[] = [];
 	if (loader && "pages" in loader) {
-		out.push("Source: doc loader (Markdown, formulas as LaTeX, scanned pages read by a vision model).");
+		const out = ["Source: doc loader (Markdown, formulas as LaTeX, scanned pages read by a vision model)."];
 		for (const i of pages) {
 			out.push(`--- Page ${i} ---`);
 			out.push(loader.pages.get(i) ?? "");
 		}
 		return out.join("\n");
 	}
-	if (loader) out.push(`Note: ${loader.note}.`);
-	for (const i of pages) {
-		const page = await doc.getPage(i);
-		const content = await page.getTextContent();
-		out.push(`--- Page ${i} ---`);
-		out.push(itemsToText(content.items as unknown[]));
-	}
-	return out.join("\n");
+	const converted = await documentToMarkdown(doc, pages);
+	const text = converted.map((page) => `--- Page ${page.number} ---\n${pageMarkdown(page)}`).join("\n");
+	return loader ? `Note: ${loader.note}.\n${text}` : text;
 }
 
 export interface PdfSearchHit {
@@ -266,15 +280,10 @@ export async function pdfSearch(
 	const hits: PdfSearchHit[] = [];
 	const pageTexts = new Map<number, string>();
 	const loader = await loaderText(filePath);
-	for (let i = 1; i <= doc.numPages; i++) {
-		let text: string;
-		if (loader && "pages" in loader) {
-			text = loader.pages.get(i) ?? "";
-		} else {
-			const page = await doc.getPage(i);
-			const content = await page.getTextContent();
-			text = itemsToText(content.items as unknown[]);
-		}
+	const texts = loader && "pages" in loader
+		? Array.from({ length: doc.numPages }, (_, k) => ({ number: k + 1, text: loader.pages.get(k + 1) ?? "" }))
+		: (await documentToMarkdown(doc)).map((page) => ({ number: page.number, text: pageMarkdown(page) }));
+	for (const { number: i, text } of texts) {
 		pageTexts.set(i, text);
 		const lines = text.split("\n");
 		for (let ln = 0; ln < lines.length; ln++) {

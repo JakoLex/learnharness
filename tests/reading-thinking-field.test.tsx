@@ -11,7 +11,7 @@ import { deferredAnswer } from "../src/core/question-core.ts";
 describe("the reading-thinking field (owner round, 2026-10-07)", () => {
 	it("carries vertical padding — the 1px-scrollbar absorption", () => {
 		const html = renderToStaticMarkup(
-			<ReadingThinkingField value="" onChange={() => {}} claim={false} />,
+			<ReadingThinkingField value="" revision={0} onChange={() => {}} claim={false} />,
 		);
 		// The fix (empirically diagnosed): Source Sans 3's font box (22px at
 		// 16px) exceeds lh-input's 20px line box by 1px; Chromium counts that
@@ -27,13 +27,13 @@ describe("the reading-thinking field (owner round, 2026-10-07)", () => {
 
 describe("the ask-the-tutor field (owner, 2026-10-28)", () => {
 	it("reads as the tutor channel; the send arrow is live only with text and asking possible", () => {
-		const empty = renderToStaticMarkup(<ReadingThinkingField value="" onChange={() => {}} onAsk={() => {}} claim={false} />);
+		const empty = renderToStaticMarkup(<ReadingThinkingField value="" revision={0} onChange={() => {}} onAsk={() => {}} claim={false} />);
 		assert.match(empty, />Ask the tutor</);
 		assert.match(empty, /placeholder="Ask anything before the check…"/);
 		assert.match(empty, /<button[^>]*data-testid="ask-tutor-send"[^>]*disabled=""/);
-		const text = renderToStaticMarkup(<ReadingThinkingField value="Why?" onChange={() => {}} onAsk={() => {}} claim={false} />);
+		const text = renderToStaticMarkup(<ReadingThinkingField value="Why?" revision={0} onChange={() => {}} onAsk={() => {}} claim={false} />);
 		assert.doesNotMatch(text, /<button[^>]*data-testid="ask-tutor-send"[^>]*disabled=""/);
-		const unavailable = renderToStaticMarkup(<ReadingThinkingField value="Why?" onChange={() => {}} claim={false} />);
+		const unavailable = renderToStaticMarkup(<ReadingThinkingField value="Why?" revision={0} onChange={() => {}} claim={false} />);
 		assert.match(unavailable, /<button[^>]*data-testid="ask-tutor-send"[^>]*disabled=""/, "busy/compacting/sibling: no asking");
 	});
 
@@ -62,6 +62,7 @@ describe("the ask-the-tutor field (owner, 2026-10-28)", () => {
 		await act(async () => root.render(
 			<ReadingThinkingField
 				value={props.value}
+				revision={0}
 				onChange={() => {}}
 				onAsk={props.ask ? () => calls.ask++ : undefined}
 				onOpen={props.open ? () => calls.open++ : undefined}

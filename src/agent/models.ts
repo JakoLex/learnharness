@@ -3,6 +3,7 @@ import {
 	createModels,
 	getSupportedThinkingLevels,
 	type Api,
+	type CacheRetention,
 	type Model,
 	type Models,
 	type MutableModels,
@@ -34,7 +35,7 @@ export const APP_IDENTITY = Object.freeze({
 
 /**
  * The one engine factory every agent's model comes from (the pi-ai swap,
- * docs/pi-engine-swap.md). BYOK ALL THE WAY DOWN (owner, 2026-09-22):
+ * docs/archive/pi-engine-swap.md). BYOK ALL THE WAY DOWN (owner, 2026-09-22):
  * there are no factory pins — every engine resolves from a RESOLVED SPEC
  * (the settings chain's output) and the one builder here wires it to
  * pi-ai's federated catalogs.
@@ -139,7 +140,7 @@ function defaultThinkingLevel(model: Model<Api>): ThinkingLevel {
  *  key is resolved by pi-ai itself from the environment per request (the
  *  keys seam reflects file-saved keys into env), so the engine never
  *  hardcodes OpenRouter's. */
-export function piEngineForSpec(spec: ResolvedModelSpec, background: boolean | (() => boolean) = true, lifecycle?: ChatGPTDispatchLifecycle): PiEngine {
+export function piEngineForSpec(spec: ResolvedModelSpec, background: boolean | (() => boolean) = true, lifecycle?: ChatGPTDispatchLifecycle, cacheRetention?: () => CacheRetention | undefined): PiEngine {
 	const models: Models = piModels();
 	const nativeId = nativeSubscriptionId(spec.provider);
 	const registeredModel = spec.provider === "chatgpt" ? chatGPTModel(spec.id) : nativeId ? nativeSubscriptionModel(spec.provider, spec.id) : models.getModel(spec.provider, spec.id);
@@ -158,7 +159,11 @@ export function piEngineForSpec(spec: ResolvedModelSpec, background: boolean | (
 	// The agent loop forwards state.thinkingLevel as `reasoning` (undefined
 	// = off on pi-ai's scale). Built-ins keep the factory clamp; custom
 	// requests re-resolve thinking against their current metadata below.
-	const primary: StreamFunction = (requestModel, context, options) => {
+	const primary: StreamFunction = (requestModel, context, rawOptions) => {
+		// Read the slot preference for every operation, not just engine creation.
+		// Unset adds NOTHING: native defaults/env and explicit caller options survive.
+		const retention = cacheRetention?.();
+		const options = retention !== undefined ? { ...rawOptions, cacheRetention: retention } : rawOptions;
 		if (custom) {
 			// Revalidate before EVERY upstream model operation, including later
 			// tool-loop steps. Resolve thinking from the ORIGINAL preference (or

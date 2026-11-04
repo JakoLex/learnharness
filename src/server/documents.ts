@@ -2,20 +2,34 @@
  * DOCUMENT IMPORT (owner, 2026-10-29): "Import notes" also takes PDFs,
  * slides, Word files, HTML and images. They go through the doc loader
  * (src/agent/doc-loader.ts) into Markdown with LaTeX before the graph
- * extraction. Without it, a PDF falls back to the pdf.js text layer and the
- * result carries a notice; the other formats fail with a clear message.
+ * extraction. Without it, a PDF falls back to upstream's pdf.js Markdown
+ * converter and the result carries a notice; the other formats fail with a
+ * clear message.
  */
-import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 import { convertDocument, docLoaderConfigured, DocLoaderFailedError, DocLoaderUnavailableError, type DocPage } from "../agent/doc-loader.ts";
-import { pdfTextLayer } from "../agent/subagents/pdf-ops.ts";
+import { convertPdf } from "../agent/subagents/pdf-ops.ts";
+import { joinPages } from "../agent/subagents/pdf-markdown.ts";
+
+/** The pdf.js fallback's page cap (upstream's import limit). */
+const MAX_PDF_PAGES = 1000;
 
 /** Extensions read through the doc loader; everything else imports as text. */
 export const DOCUMENT_EXTENSIONS: readonly string[] = [".pdf", ".pptx", ".docx", ".html", ".htm", ".png", ".jpg", ".jpeg"];
 
 export function isDocumentFile(name: string): boolean {
 	return DOCUMENT_EXTENSIONS.includes(path.extname(name).toLowerCase());
+}
+
+const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46, 0x2d]; // "%PDF-"
+
+/** How an uploaded file is read: a PDF is known by its bytes, not its name
+ *  (upstream's rule — a ".pdf" of plain text imports as text); the other
+ *  documents by their extension; null = a text file. */
+export function documentKind(name: string, bytes: Uint8Array): "pdf" | "other" | null {
+	if (PDF_MAGIC.every((byte, i) => bytes[i] === byte)) return "pdf";
+	const ext = path.extname(name).toLowerCase();
+	return ext !== ".pdf" && DOCUMENT_EXTENSIONS.includes(ext) ? "other" : null;
 }
 
 export interface ReadDocument {
@@ -54,11 +68,16 @@ export async function readDocument(
 			: `${ext} files need the doc loader, which could not read this file: ${reason}`);
 	}
 	if (logged) console.warn(`[doc-loader] ${file.name}: read with pdf.js instead — ${reason}`);
-	const text = await pdfTextLayerOf(file.bytes);
-	if (!text.replace(/--- Page \d+ ---/g, "").trim()) {
+	const pdfDoc = await convertPdf(file.bytes, MAX_PDF_PAGES);
+	if (pdfDoc.kind === "unreadable") throw new Error("Could not open this PDF.");
+	if (pdfDoc.kind === "too-long") throw new Error("Too long. Max 1,000 pages.");
+	const text = joinPages(pdfDoc.pages);
+	if (!text) {
 		throw new Error(`This PDF has no text layer, and the doc loader (${reason}) is needed to read scanned pages.`);
 	}
-	return { text, notice: `Read without the doc loader (${reason}) — formulas and scanned pages are missing.` };
+	const skipped = pdfDoc.pages.filter((page) => page.kind === "image-only").length;
+	const omission = skipped > 0 ? ` Skipped ${skipped} image-only ${skipped === 1 ? "page" : "pages"}.` : "";
+	return { text, notice: `Read without the doc loader (${reason}) — formulas may be garbled and scanned pages are missing.${omission}` };
 }
 
 /** The loader's pages with markers, when it numbered them. */
@@ -69,15 +88,4 @@ function withPages(pages: DocPage[]): { pagedText?: string } {
 			.map((p) => (p.page === null ? p.text.trim() : `--- Page ${p.page} ---\n${p.text.trim()}`))
 			.join("\n\n"),
 	};
-}
-
-async function pdfTextLayerOf(bytes: Uint8Array): Promise<string> {
-	const dir = await fs.mkdtemp(path.join(os.tmpdir(), "lh-import-"));
-	try {
-		const file = path.join(dir, "document.pdf");
-		await fs.writeFile(file, bytes);
-		return await pdfTextLayer(file);
-	} finally {
-		await fs.rm(dir, { recursive: true, force: true });
-	}
 }

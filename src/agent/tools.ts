@@ -24,6 +24,7 @@ import { readTool } from "./tools/read.ts";
 import { lsTool } from "./tools/ls.ts";
 import { findTool } from "./tools/find.ts";
 import { grepTool } from "./tools/grep.ts";
+import { createShowImageTool } from "./tools/show-image.ts";
 import { healToolRecord } from "./tools/heal.ts";
 import type { GraphStore } from "../core/ports.ts";
 
@@ -51,7 +52,7 @@ function withoutHostPdf(tools: Record<string, AgentTool<any>>): Record<string, A
 export type { ProbeDoneContext } from "./tools/probe.ts";
 
 /**
- * The agent-split tool composition (docs/probe-teach-split.md §1): the
+ * The agent-split tool composition (docs/archive/probe-teach-split.md §1): the
  * PROBER and the TEACHER are different agents with different tool sets.
  * The question tools share a NAME but are genuinely DIFFERENT tools —
  * the prober's quiz has NO nodeId field at all (its declaration is built
@@ -476,6 +477,10 @@ export function createTeacherTools(
 			// files on its own terms — nothing auto-injects. Read-only by
 			// construction (fs-shared.ts). Accounts: the admin's only.
 			...fileTools(),
+			// The learner-image display twin of read (issue #363): teacher
+			// only, always on — it shows the learner their own file. Fork
+			// (owner, 2026-11-04): every account, not only the admin.
+			show_image: createShowImageTool(ctx),
 			...planTools(ctx),
 			...withoutHostPdf(jobTools({ chatId: ctx.chatId, jobStore: ctx.jobStore, spawn: ctx.spawn, searchAvailable: ctx.searchAvailable })),
 			...(ctx.graphStore ? proberGraphTools({ chatStore: ctx.chatStore, graphStore: ctx.graphStore }) : {}),

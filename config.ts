@@ -147,6 +147,10 @@ export function sourcesFile(): string {
 export function sourceTextFile(id: string): string {
 	return path.join(PATHS.graph, "source-text", `${id}.md`);
 }
+/** Presentation-only source names/folder placement; never extraction identity. */
+export function sourceOrganizationFile(): string {
+	return path.join(PATHS.graph, "source-organization.json");
+}
 /** The layout ledger (read-modify-write like sources.json): nodeId →
  *  {x,y} resting positions from the incremental settle (core/layout.ts).
  *  Carries an updatedAt stamp for future live-physics conflict handling. */

@@ -55,6 +55,24 @@ export const AUTH_KEYS: readonly AuthKeyInfo[] = [
 		docsUrl: "https://brave.com/search/api/",
 	},
 	{
+		id: "EXA_API_KEY",
+		label: "Exa",
+		description: "Web-search engine for the researcher. Search requests use your Exa account and its pricing.",
+		docsUrl: "https://dashboard.exa.ai/api-keys",
+	},
+	{
+		id: "FIRECRAWL_API_KEY",
+		label: "Firecrawl",
+		description: "Web-search engine for the researcher sub-agent — an alternative to Tavily and Brave. Setting the key activates it.",
+		docsUrl: "https://www.firecrawl.dev/app/api-keys",
+	},
+	{
+		id: "OLLAMA_API_KEY",
+		label: "Ollama",
+		description: "Hosted web search at ollama.com — requires an Ollama API key. Setting it activates search, not local models.",
+		docsUrl: "https://ollama.com/settings/keys",
+	},
+	{
 		id: "DOC_LOADER_URL",
 		label: "Doc loader (base URL)",
 		description: "An Open WebUI \"External\" document loader (PUT <base>/process). With its key set, imports read PDFs, slides, Word files and images through it, and the PDF reader gets its Markdown with LaTeX, e.g. http://docs.internal:8080",
@@ -173,8 +191,8 @@ export type KeyShapeResult = { ok: true } | { ok: false; error: string };
  * a truncated or wrong-family key can never land in the store). Values are
  * TRIMMED first (paste hygiene); empty-after-trim always fails.
  *
- * CURATED keys carry family rules (Tavily's tvly-… prefix; Brave and
- * Deepgram publish no format — length floors + paste hygiene only).
+ * CURATED keys carry family rules (Tavily's tvly-… and Firecrawl's fc-…
+ * prefixes; Brave, Exa, Ollama and Deepgram use length floors + paste hygiene only).
  * MODEL-PROVIDER keys use genericProviderKeyGuard below instead (families
  * vary by provider — only paste hygiene applies; owner spec: min length
  * ~12, no whitespace). OPENROUTER_API_KEY moved to the generic guard with
@@ -199,6 +217,14 @@ export function validateKeyShape(id: string, rawValue: string): KeyShapeResult {
 			return /^https?:\/\/\S+$/.test(value)
 				? { ok: true }
 				: { ok: false, error: `${id} must be a full http(s) base URL, e.g. http://searxng.internal:8080` };
+		case "EXA_API_KEY":
+		case "OLLAMA_API_KEY":
+			// No documented key prefix: use the provider-key paste guard.
+			return nonEmpty(12);
+		case "FIRECRAWL_API_KEY":
+			return value.startsWith("fc-")
+				? nonEmpty(20)
+				: { ok: false, error: `${id} must start with "fc-" (Firecrawl's key format)` };
 		case "DEEPGRAM_API_KEY":
 			// No public format — the length floor only catches truncated pastes.
 			return nonEmpty(20);
