@@ -182,7 +182,7 @@ for (const image of ["mask", "inline"] as const) it(`mixed PDF notices include t
 	assert.equal(results[0].notice, `${FALLBACK_NOTICE} Skipped 1 image-only page.`);
 });
 
-for (const split of [false, true]) it(`server refuses actual file bytes over 25 MiB (${split ? "aggregate" : "single file"}) before the pipeline`, async () => {
+for (const split of [false, true]) it(`server refuses actual file bytes over the 100 MiB limit (${split ? "aggregate" : "single file"}) before the pipeline`, async () => {
 	let calls = 0;
 	extraction.importNotes = async () => { calls++; return { nodes: 0, chains: 0 }; };
 	const files = split
@@ -192,11 +192,11 @@ for (const split of [false, true]) it(`server refuses actual file bytes over 25 
 	req.headers.set("content-length", "1"); // not a trustworthy bound
 	const response = await POST(req);
 	assert.equal(response.status, 413);
-	assert.deepEqual(await response.json(), { results: [], error: "Too big. Max 25 MB." });
+	assert.deepEqual(await response.json(), { results: [], error: "Too big. Max 100 MB." });
 	assert.equal(calls, 0);
 });
 
-it("server accepts exactly 25 MiB of files with multipart overhead below 26 MiB", async () => {
+it("server accepts exactly the 100 MiB file limit with multipart overhead below the body limit", async () => {
 	let received = 0;
 	extraction.importNotes = async (input) => { received = (await textOf(input)).length; return { nodes: 0, chains: 0 }; };
 	const response = await POST(upload([{ name: "boundary.txt", bytes: new Uint8Array(MAX_IMPORT_BYTES) }]));

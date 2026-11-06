@@ -15,7 +15,8 @@ process.env.LH_DATA_DIR = testData;
 process.env.LH_AUTH_FILE = join(testData, "auth.json");
 const { convertDocument, cachedDocument, docLoaderConfigured, DocLoaderFailedError, DocLoaderUnavailableError, parseLoaderResponse } =
 	await import("../src/agent/doc-loader.ts");
-const { readDocument, isDocumentFile } = await import("../src/server/documents.ts");
+const { readDocument, isDocumentFile, DOCUMENT_EXTENSIONS } = await import("../src/server/documents.ts");
+const { IMPORT_EXTENSIONS, IMPORT_FILE_EXTENSIONS } = await import("../lib/notes-import-limits.ts");
 const { pdfExtract, pdfSearch, docLoaderWait } = await import("../src/agent/subagents/pdf-ops.ts");
 const { POST } = await import("../app/api/graph/import/route.ts");
 const { extraction } = await import("../src/server/index.ts");
@@ -229,4 +230,12 @@ test("the import route reads a PDF inside importNotes and reports the fallback n
 	assert.match(pdf.notice ?? "", /without the doc loader/);
 	assert.match(readText, /Calculus page/);
 	assert.equal(results.find((r) => r.filePath === "notes.md")!.notice, undefined);
+});
+
+test("every document the server reads through the loader is offered and queued by the import (owner, 2026-11-06)", () => {
+	for (const ext of DOCUMENT_EXTENSIONS) {
+		assert.ok(IMPORT_FILE_EXTENSIONS.includes(ext), ext);
+		assert.match(`TM/Folien${ext.toUpperCase()}`, IMPORT_EXTENSIONS);
+	}
+	assert.doesNotMatch("Root/a.zip", IMPORT_EXTENSIONS);
 });

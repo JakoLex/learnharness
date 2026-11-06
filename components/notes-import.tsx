@@ -6,12 +6,14 @@ import { apiFetch } from "@/components/api-fetch";
 import { Hint } from "@/components/ui/hint";
 import { createNotesImportQueue, EMPTY_IMPORT_QUEUE, notesPath } from "./notes-import-queue";
 
+import { IMPORT_FILE_EXTENSIONS } from "@/lib/notes-import-limits.ts";
+
 export { MAX_IMPORT_BYTES } from "@/lib/notes-import-limits.ts";
 export { notesPath } from "./notes-import-queue";
 
-/** What the Files picker offers: text notes, plus documents the server reads
- *  through the doc loader (fork; src/server/documents.ts DOCUMENT_EXTENSIONS). */
-export const NOTES_IMPORT_ACCEPT = ".md,.markdown,.txt,.pdf,.pptx,.docx,.html,.htm,.png,.jpg,.jpeg";
+/** What the Files picker offers: the same list the queue checks — text notes,
+ *  plus documents the server reads through the doc loader (fork). */
+export const NOTES_IMPORT_ACCEPT = IMPORT_FILE_EXTENSIONS.join(",");
 
 // Transport-only types: never import the server's extraction/agent module here.
 export interface NotesImportResult {

@@ -43,10 +43,19 @@ it("errors/notices keep selection order across appends even when requests settle
 it("unsupported-only directories are never sent; picker .DS_Store is ignored and eligible siblings proceed", async () => {
 	const paths: string[] = [];
 	const queue = createNotesImportQueue(async ([f]) => { const path = f!.webkitRelativePath || f!.name; paths.push(path); return [success(path)]; });
-	queue.append([file(".DS_Store", "Root/.DS_Store"), file("a.png", "Root/Images/a.png"), file("notes.md", "Root/Sub/notes.md"), file("bad.txt", "../bad.txt")]);
+	queue.append([file(".DS_Store", "Root/.DS_Store"), file("a.zip", "Root/Archive/a.zip"), file("notes.md", "Root/Sub/notes.md"), file("bad.txt", "../bad.txt")]);
 	await tick();
 	assert.deepEqual(paths, ["Root/Sub/notes.md"]);
-	assert.deepEqual(queue.getSnapshot().errors, ["Root/Images/a.png: Unsupported format or unsafe relative path.", "../bad.txt: Unsupported format or unsafe relative path."]);
+	assert.deepEqual(queue.getSnapshot().errors, ["Root/Archive/a.zip: Unsupported format or unsafe relative path.", "../bad.txt: Unsupported format or unsafe relative path."]);
+});
+
+it("folder picks send the doc loader's documents too: slides, Word, HTML and images (fork, owner 2026-11-06)", async () => {
+	const paths: string[] = [];
+	const queue = createNotesImportQueue(async ([f]) => { const path = f!.webkitRelativePath; paths.push(path); return [success(path)]; });
+	queue.append([file("0_Einführung.pptx", "TM/0_Einführung.pptx"), file("Blatt.docx", "TM/Blatt.docx"), file("Seite.html", "TM/Seite.html"), file("Tafel.jpg", "TM/Tafel.jpg")]);
+	await tick();
+	assert.deepEqual(paths, ["TM/0_Einführung.pptx", "TM/Blatt.docx", "TM/Seite.html", "TM/Tafel.jpg"]);
+	assert.deepEqual(queue.getSnapshot().errors, []);
 });
 
 it("folder picks skip dot-directories such as .obsidian/ silently, even when the chosen root itself is hidden", async () => {

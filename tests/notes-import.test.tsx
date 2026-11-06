@@ -125,19 +125,19 @@ it("PDF notices and failures survive per-file requests, in selection order", asy
 	await mount(); await submit([new File(["a"], "a.pdf"), new File(["b"], "b.md"), new File(["c"], "c.pdf")]);
 	assert.deepEqual(current.notices, ["c.pdf: Scanned pages may have errors."]); assert.deepEqual(current.errors, ["a.pdf: OCR not supported yet."]);
 });
-for (const [status, error] of [[413, "Too big. Max 25 MB."], [413, "Import request is too large. Select fewer files."], [400, "Could not read the upload. It may be incomplete; please select the files again."]] as const) it(`server refusal remains readable (${error})`, async () => {
+for (const [status, error] of [[413, "Too big. Max 100 MB."], [413, "Import request is too large. Select fewer files."], [400, "Could not read the upload. It may be incomplete; please select the files again."]] as const) it(`server refusal remains readable (${error})`, async () => {
 	globalThis.fetch = async () => Response.json({ results: [], error }, { status });
 	await mount(); await submit();
 	assert.deepEqual(current.errors, files.map((file) => `${file.name}: Import request failed (HTTP ${status}): ${error} Check the graph before retrying.`));
 	assert.deepEqual(current.notices, []); assert.equal(current.importing, false);
 });
-it("25 MiB is per file, not per selection; oversized files fail locally while smaller siblings upload", async () => {
+it("the size limit (100 MiB, fork) is per file, not per selection; oversized files fail locally while smaller siblings upload", async () => {
 	const sent: string[] = [];
 	globalThis.fetch = async (_url, init) => { const file = (init!.body as FormData).get("files") as File; sent.push(file.name); return Response.json({ results: [completed(0, file.name)] }); };
 	await mount();
 	const half = new Uint8Array(MAX_IMPORT_BYTES / 2 + 1);
 	await submit([new File([new Uint8Array(MAX_IMPORT_BYTES + 1)], "textbook.pdf"), new File([half], "a.pdf"), new File([half], "b.pdf")]);
-	assert.deepEqual(sent, ["a.pdf", "b.pdf"]); assert.deepEqual(current.errors, ["textbook.pdf: Too big. Max 25 MB."]);
+	assert.deepEqual(sent, ["a.pdf", "b.pdf"]); assert.deepEqual(current.errors, ["textbook.pdf: Too big. Max 100 MB."]);
 });
 it("picker stays enabled during imports, offers Files/Folder, and keeps PDF support", () => {
 	const html = renderToStaticMarkup(<NotesImportControl importing onImportFiles={() => {}} />);

@@ -18,7 +18,7 @@
  * /api/graph/status, as with session runs.
  */
 import { documentKind, extraction, NotesImportError, readDocument, scoped, sourceDirectory } from "@/src/server";
-import { MAX_IMPORT_BODY_BYTES, MAX_IMPORT_BYTES, validNotesPath } from "@/lib/notes-import-limits.ts";
+import { MAX_IMPORT_BODY_BYTES, MAX_IMPORT_BYTES, TOO_BIG_MESSAGE, validNotesPath } from "@/lib/notes-import-limits.ts";
 import {
 	emit,
 	ModelsNotConfiguredError,
@@ -96,7 +96,7 @@ async function POSTHandler(request: Request) {
 	}
 	const files = form.getAll("files").filter((f): f is File => f instanceof File);
 	if (files.reduce((total, file) => total + file.size, 0) > MAX_IMPORT_BYTES) {
-		return Response.json({ results: [] as ImportResult[], error: "Too big. Max 25 MB." }, { status: 413 });
+		return Response.json({ results: [] as ImportResult[], error: TOO_BIG_MESSAGE }, { status: 413 });
 	}
 	if (files.length === 0) {
 		return Response.json({ results: [] as ImportResult[], error: "no files" }, { status: 400 });
