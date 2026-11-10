@@ -1504,7 +1504,9 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 								});
 								// The layout ledger evolves with the merge (sync — the
 								// next snapshot fetch must already reflect the new nodes).
-								settleGraphLayout(graphStore);
+								// Fork (owner, 2026-11-10): a chat merge settles FREELY,
+								// so earlier nodes can follow the links this batch added.
+								settleGraphLayout(graphStore, { free: true });
 								console.info(
 									`[extraction ${jobKey}] merged: ${batchStats.nodes} nodes, ${batchStats.chains ?? 0} chains`,
 								);
@@ -1764,6 +1766,11 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 			// Fork (2026-10-27): only a COMPLETED import bridges — partial or
 			// aborted runs threw above.
 			if (deps.bridgeAfterImport) await runBridge(id, input.filePath);
+			// Fork (owner, 2026-11-10): the finished source settles FREELY
+			// once — its chunks and bridges are all in, so every node may
+			// travel to where its links now pull it (the per-chunk settles
+			// above stay anchored while the import grows).
+			settleGraphLayout(graphStore, { free: true });
 			return stats;
 		} catch (err) {
 			if (err instanceof NotesImportError || err instanceof ModelsNotConfiguredError || err instanceof ProviderKeyMissingError) throw err;

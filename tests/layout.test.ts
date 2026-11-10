@@ -120,6 +120,32 @@ describe("settleGraphLayout", () => {
 		assert.deepEqual(Object.keys(written[0]!).sort(), ["a", "arg_bcd", "b", "c", "d"], "positions for the unique nodes and ONLY the multi-premise chain's imp node");
 	});
 
+	it("free: a placed node follows a new link that the anchored settle holds back (fork, 2026-11-10)", () => {
+		// b and c were placed far apart; a later chain now links them.
+		const previous: Record<string, Position> = {
+			a: { x: 0, y: 0 },
+			b: { x: 40, y: 0 },
+			c: { x: 1500, y: 0 },
+			d: { x: 1540, y: 0 },
+		};
+		const settle = (free: boolean) => {
+			let out: Record<string, Position> = {};
+			settleGraphLayout(
+				{
+					readNodes: () => ["a", "b", "c", "d"].map(node),
+					readChains: () => [chain("arg_ab", ["a"], "b"), chain("arg_cd", ["c"], "d"), chain("arg_bc", ["b"], "c")],
+					readPositions: () => previous,
+					writePositions: (p) => void (out = p),
+				},
+				{ free },
+			);
+			return Math.hypot(out.c!.x - out.b!.x, out.c!.y - out.b!.y);
+		};
+		const anchored = settle(false);
+		const free = settle(true);
+		assert.ok(free < anchored / 2, `free b–c ${free.toFixed(0)} should be far below anchored ${anchored.toFixed(0)}`);
+	});
+
 	it("does nothing on an empty graph", () => {
 		const written: Record<string, Position>[] = [];
 		settleGraphLayout({

@@ -57,6 +57,14 @@ import type { Simulation, SimulationLinkDatum } from "d3-force";
 import { clusterHue, type Pt } from "./cluster-geometry.ts";
 import { createLongPress } from "./long-press.ts";
 import {
+	LIVE_ALPHA_DECAY,
+	liveSimOptions,
+	maxDisplacement,
+	SIM_SETTLE_ALPHA,
+	type RelaxRequest,
+	type RelaxResult,
+} from "./graph-relax.ts";
+import {
 	CHARGE_STRENGTH,
 	CLUSTER_PULL_STRENGTH,
 	createGraphSimulation,
@@ -315,11 +323,21 @@ const PICKING_PAD = 10;
 const CLICK_SLOP = 4;
 /** The same for a finger (fork, owner 2026-10-30): a tap wobbles more. */
 const TOUCH_TAP_SLOP = 10;
-/** Live-sim tuning — see the class doc comment. */
-const LIVE_ALPHA_DECAY = 0.05; // snappier anneal than the settle's 0.0228
+/** Live-sim tuning — see the class doc comment. LIVE_ALPHA_DECAY and
+ *  SIM_SETTLE_ALPHA live in graph-relax.ts (shared with the worker). */
 const DRAG_ALPHA_TARGET = 0.3; // d3-drag's own reheat constant
-const SIM_SETTLE_ALPHA = 0.005; // below this, the sim counts as settled
 const COMMIT_DEBOUNCE_MS = 250; // settle → ledger PUT delay (new drags cancel)
+/** The relax worker, bundled by Turbopack from the `new Worker(new URL(…))`
+ *  pattern (it must stay literally in this shape for the bundler). */
+function createRelaxWorker(): Worker {
+	return new Worker(new URL("./graph-relax.worker.ts", import.meta.url));
+}
+
+/** Background relax (fork, owner 2026-11-10): a quiet spell before the
+ *  worker starts (data and the server's tuning arrive back to back), and
+ *  the glide to its result. */
+const RELAX_DEBOUNCE_MS = 150;
+const RELAX_GLIDE_MS = 300;
 
 /** Cluster region styling — a low-res world-space SPLAT bitmap (the
  *  density-field technique, Canvas-2D edition): every member node paints
@@ -886,6 +904,13 @@ export class GraphCanvasRenderer {
 	private dragOrigin: Pt | null = null;
 	private simMoved = false; // any real movement since the last commit
 	private commitTimer: ReturnType<typeof setTimeout> | null = null;
+	/** Background relax (fork, owner 2026-11-10): the worker, the request
+	 *  sequence (a newer request or new data makes older answers stale),
+	 *  its debounce, and the glide to an accepted answer. */
+	private relaxWorker: Worker | null = null;
+	private relaxSeq = 0;
+	private relaxTimer: ReturnType<typeof setTimeout> | null = null;
+	private glide: { from: Map<string, Position>; to: Record<string, Position>; start: number } | null = null;
 
 	private frameId: number | null = null;
 	private dirty = true;
@@ -1097,10 +1122,13 @@ export class GraphCanvasRenderer {
 		this.simActive = false;
 		this.dragId = null;
 		this.simMoved = false;
+		this.glide = null;
+		this.relaxSeq++; // an answer for the old data is moot
 		this.simCenter = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
 		this.buildSim();
 		this.geoVersion++; // new data → rebuild world geometry
 		this.markDirty();
+		this.requestRelax();
 	}
 
 	setSettings(settings: GraphRenderSettings): void {
@@ -1145,8 +1173,14 @@ export class GraphCanvasRenderer {
 		// reheat: false for tuning the user did not just change (the
 		// server's copy): it applies from the next drag on.
 		if (this.sim && options.reheat !== false) {
+			this.glide = null;
+			this.relaxSeq++; // the visible re-anneal replaces any background answer
 			this.sim.alpha(1);
 			this.simActive = true;
+		} else {
+			// Fork (owner, 2026-11-10): a quiet tuning (the server's copy)
+			// still relaxes — in the background, under the new forces.
+			this.requestRelax();
 		}
 		this.markDirty();
 	}
@@ -1223,6 +1257,10 @@ export class GraphCanvasRenderer {
 	destroy(): void {
 		if (this.frameId !== null) cancelAnimationFrame(this.frameId);
 		if (this.commitTimer) clearTimeout(this.commitTimer);
+		if (this.relaxTimer) clearTimeout(this.relaxTimer);
+		this.relaxWorker?.terminate();
+		this.relaxWorker = null;
+		this.glide = null;
 		this.sim = null;
 		this.simActive = false;
 		this.dragId = null;
@@ -1336,6 +1374,10 @@ export class GraphCanvasRenderer {
 			}
 			this.dragId = node.id;
 			this.dragOrigin = pos;
+			// A press mid-glide keeps the nodes where they are now; the
+			// drag's own anneal and commit take over.
+			this.glide = null;
+			this.relaxSeq++;
 			const n = this.simById.get(node.id);
 			if (n) {
 				n.fx = n.x;
@@ -1490,11 +1532,12 @@ export class GraphCanvasRenderer {
 			const hoverAnim = this.advanceHover();
 			const zoomAnim = this.advanceZoom(dt);
 			const simAnim = this.advanceSim();
+			const glideAnim = this.advanceGlide();
 			this.draw();
 			// Keep frames coming ONLY while an animation is in motion (hover
-			// fade, zoom glide, or live physics); an idle graph schedules no
-			// rAF at all.
-			this.animating = hoverAnim || zoomAnim || simAnim;
+			// fade, zoom glide, live physics, or the relax glide); an idle
+			// graph schedules no rAF at all.
+			this.animating = hoverAnim || zoomAnim || simAnim || glideAnim;
 		} finally {
 			this.inTick = false;
 		}
@@ -1540,6 +1583,85 @@ export class GraphCanvasRenderer {
 			for (const n of this.data.nodes) positions[n.id] = { x: n.x, y: n.y };
 			this.callbacks.onCommit(positions);
 		}, COMMIT_DEBOUNCE_MS);
+	}
+
+	/** Start (debounced) a background relax of the current data under the
+	 *  current tuning (fork, owner 2026-11-10). No Worker (Node tests,
+	 *  ancient browsers) → nothing happens; the graph simply stays put. */
+	private requestRelax(): void {
+		if (typeof Worker === "undefined") return;
+		if (this.relaxTimer) clearTimeout(this.relaxTimer);
+		this.relaxTimer = setTimeout(() => {
+			this.relaxTimer = null;
+			const data = this.data;
+			if (!data || data.nodes.length === 0) return;
+			if (!this.relaxWorker) {
+				try {
+					this.relaxWorker = createRelaxWorker();
+				} catch (err) {
+					console.warn("[graph] background relax unavailable", err);
+					return;
+				}
+				this.relaxWorker.onmessage = (event: MessageEvent<RelaxResult>) => this.onRelaxed(event.data);
+			}
+			const request: RelaxRequest = {
+				seq: ++this.relaxSeq,
+				data: {
+					nodes: data.nodes.map((n) => ({ id: n.id, x: n.x, y: n.y })),
+					edges: data.edges,
+					logicalEdges: data.logicalEdges,
+					impLinks: data.impLinks,
+					clusters: data.clusters.map((c) => ({ members: c.members })),
+				},
+				tuning: this.physicsTuning,
+				center: this.simCenter,
+			};
+			this.relaxWorker.postMessage(request);
+		}, RELAX_DEBOUNCE_MS);
+	}
+
+	/** The worker's answer: glide there if it is still current, nobody is
+	 *  moving nodes, and some node would travel more than its own radius
+	 *  (less is not worth a single frame on the iPad). */
+	private onRelaxed(result: RelaxResult): void {
+		const data = this.data;
+		if (!data || result.seq !== this.relaxSeq) return;
+		if (this.dragId || this.simActive || this.glide) return;
+		const max = maxDisplacement(data.nodes, result.positions);
+		if (max === null || max <= (this.settings?.nodeSize ?? 0)) return;
+		this.glide = {
+			from: new Map(data.nodes.map((n) => [n.id, { x: n.x, y: n.y }])),
+			to: result.positions,
+			start: performance.now(),
+		};
+		this.markDirty();
+	}
+
+	/** One glide frame (ease-out over RELAX_GLIDE_MS); returns true while
+	 *  gliding. At the end the regions rebuild once and the rest state is
+	 *  committed like a settled drag. */
+	private advanceGlide(): boolean {
+		const glide = this.glide;
+		const data = this.data;
+		if (!glide || !data) return false;
+		const t = Math.min((performance.now() - glide.start) / RELAX_GLIDE_MS, 1);
+		const ease = 1 - (1 - t) ** 3;
+		for (const n of data.nodes) {
+			const a = glide.from.get(n.id);
+			const b = glide.to[n.id];
+			if (!a || !b) continue;
+			n.x = a.x + (b.x - a.x) * ease;
+			n.y = a.y + (b.y - a.y) * ease;
+			const simNode = n as LayoutNode;
+			simNode.vx = 0;
+			simNode.vy = 0;
+		}
+		this.geoVersion++;
+		if (t < 1) return true;
+		this.glide = null;
+		this.simMoved = true;
+		this.scheduleCommit();
+		return false;
 	}
 
 	/** Hover fade step; returns true while still moving. */
@@ -1850,29 +1972,8 @@ export class GraphCanvasRenderer {
 			this.simById = new Map();
 			return;
 		}
-		const t = this.physicsTuning;
-		this.sim = createGraphSimulation(data.nodes, data.edges, {
-			logicalEdges: data.logicalEdges,
-			impLinks: data.impLinks,
-			gravity: { x: this.simCenter.x, y: this.simCenter.y, strength: t.gravity },
-			alphaDecay: LIVE_ALPHA_DECAY,
-			velocityDecay: t.velocityDecay,
-			chargeStrength: t.chargeStrength,
-			linkStrength: t.linkStrength,
-			linkDistance: t.linkDistance,
-			clusterPull:
-				data.clusters.length > 0 ? { clusters: data.clusters, strength: t.clusterPull } : undefined,
-			depthAnchor:
-				t.depthMode === "off"
-					? undefined
-					: {
-							mode: t.depthMode,
-							strength: t.depthStrength,
-							spacing: t.depthSpacing,
-							baseRadius: t.depthBaseRadius,
-							center: this.simCenter,
-						},
-		});
+		// One force set with the background relax (graph-relax.ts).
+		this.sim = createGraphSimulation(data.nodes, data.edges, liveSimOptions(data, this.physicsTuning, this.simCenter));
 		this.simById = new Map(data.nodes.map((n) => [n.id, n as LayoutNode]));
 		// Hygiene (2026-09-23 fix wave): a fresh sim starts at alpha 1 and
 		// never decays while stopped — so the first post-rebuild drag would
@@ -2157,8 +2258,10 @@ export class GraphCanvasRenderer {
 		this.frameCount++;
 		// Regions: rebuild on stale geometry at rest; during the live sim,
 		// every REGION_EVERY-th frame (others blit the last bitmap).
+		// The relax glide (fork, 2026-11-10) rebuilds them once, at its end.
 		if (
 			this.regionBuiltVersion !== this.geoVersion &&
+			!this.glide &&
 			(!this.simActive || this.frameCount % REGION_EVERY === 0)
 		) {
 			this.buildRegions();

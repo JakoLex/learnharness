@@ -23,12 +23,25 @@ import { deriveView, getGraph } from "./graph.ts";
  * Server code imports it DIRECTLY; it is never re-exported through
  * src/core/index.ts.
  */
-export function settleGraphLayout(graphStore: {
-	readNodes(): GraphNode[];
-	readChains(): GraphChain[];
-	readPositions(): Record<string, Position>;
-	writePositions(positions: Record<string, Position>): void;
-}): void {
+export interface SettleOptions {
+	/** Fork (owner, 2026-11-10): settle FREELY — every node starts from its
+	 *  ledger position, but none is spring-tied back to it, so nodes that
+	 *  gained links since they were placed can travel to where those links
+	 *  pull them. Run once a source is done (an import after its bridger,
+	 *  each chat merge, a review); the per-chunk merges of a running import
+	 *  keep the anchored settle. */
+	free?: boolean;
+}
+
+export function settleGraphLayout(
+	graphStore: {
+		readNodes(): GraphNode[];
+		readChains(): GraphChain[];
+		readPositions(): Record<string, Position>;
+		writePositions(positions: Record<string, Position>): void;
+	},
+	options: SettleOptions = {},
+): void {
 	const graph = getGraph(graphStore);
 	if (graph.nodes.length === 0) return;
 	const view = deriveView(graph);
@@ -49,6 +62,8 @@ export function settleGraphLayout(graphStore: {
 		clusters: communities,
 		logicalEdges: view.logicalEdges,
 		impLinks: view.impLinks,
+		// Free: warm-start from the ledger, but no anchor re-blend.
+		...(options.free ? { anchorRetention: 1 } : {}),
 	});
 	graphStore.writePositions(Object.fromEntries(next));
 }
