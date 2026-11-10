@@ -17,6 +17,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Agent } from "undici";
 import { PATHS } from "../../config.ts";
 
 /** One page (1-based) — null for formats without pages (slides come as one). */
@@ -44,6 +45,12 @@ export class DocLoaderFailedError extends Error {
 
 /** The longest a single conversion may run (a 100-page scan takes ~20 min). */
 const CONVERSION_TIMEOUT_MS = 60 * 60_000;
+
+/** fetch's default dispatcher drops a request after 300 s without response
+ *  headers (UND_ERR_HEADERS_TIMEOUT, surfacing as "fetch failed") — the
+ *  loader only answers once the whole file is converted, which takes longer
+ *  for a 100-page script. Its own timeouts follow CONVERSION_TIMEOUT_MS. */
+const loaderDispatcher = new Agent({ headersTimeout: CONVERSION_TIMEOUT_MS, bodyTimeout: CONVERSION_TIMEOUT_MS });
 
 export function docLoaderConfigured(): boolean {
 	return Boolean(process.env.DOC_LOADER_URL?.trim() && process.env.DOC_LOADER_KEY?.trim());
@@ -116,7 +123,8 @@ async function requestConversion(bytes: Uint8Array, fileName: string, contentTyp
 			// SharedArrayBuffer-typed Uint8Array.
 			body: new Uint8Array(bytes),
 			signal: AbortSignal.timeout(CONVERSION_TIMEOUT_MS),
-		});
+			dispatcher: loaderDispatcher,
+		} as RequestInit);
 	} catch (err) {
 		throw new DocLoaderUnavailableError(`doc loader unreachable: ${(err as Error).message}`, { cause: err });
 	}
