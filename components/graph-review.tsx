@@ -7,7 +7,7 @@
  * connection with the model's reason — and undoes it. A click on an entry
  * focuses its node on the canvas. Server side: /api/graph/review.
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Loader2Icon, SparklesIcon } from "lucide-react";
 import type { ReviewEntry, ReviewProtocol } from "@/src/core";
 import { apiFetch } from "@/components/api-fetch";
@@ -23,6 +23,8 @@ const PHASE_LABEL: Record<NonNullable<ReviewProtocol["phase"]>, string> = {
 };
 
 const POLL_MS = 4000;
+/** Least distance between the panel and the screen edge (px). */
+const EDGE_GAP = 12;
 
 export function GraphReviewControl({
 	names,
@@ -41,6 +43,23 @@ export function GraphReviewControl({
 	const [busy, setBusy] = useState(false);
 	const rootRef = useRef<HTMLDivElement>(null);
 	usePopoverDismiss(rootRef, open, () => setOpen(false));
+	// Keep the panel on screen: it hangs under the button, which sits at a
+	// different place on a phone than on a tablet. (A fixed panel would not
+	// help — the backdrop-blurred bar is its containing block.)
+	const panelRef = useRef<HTMLDivElement>(null);
+	const [shift, setShift] = useState(0);
+	useLayoutEffect(() => {
+		const panel = panelRef.current;
+		if (!open || !panel) return;
+		const r = panel.getBoundingClientRect();
+		let fix = 0;
+		if (r.left < EDGE_GAP) fix = EDGE_GAP - r.left;
+		else if (r.right > window.innerWidth - EDGE_GAP) fix = window.innerWidth - EDGE_GAP - r.right;
+		if (Math.abs(fix) > 0.5) setShift((s) => s + fix);
+	});
+	useEffect(() => {
+		if (!open) setShift(0);
+	}, [open]);
 
 	const load = useCallback(() => {
 		apiFetch("/api/graph/review")
@@ -95,8 +114,12 @@ export function GraphReviewControl({
 				</button>
 			</Hint>
 			{open && (
-				<div className="absolute left-0 top-full z-20 mt-2 flex max-h-[70vh] w-96 max-w-[calc(100vw-1.5rem)] flex-col rounded-xl border bg-card/95 text-xs shadow-lg backdrop-blur">
-					<div className="flex flex-col gap-2 border-b p-3">
+				<div
+					ref={panelRef}
+					style={{ transform: `translateX(${shift}px)` }}
+					className="absolute right-0 top-full z-20 mt-2 flex max-h-[70vh] w-96 max-w-[calc(100vw-1.5rem)] flex-col rounded-xl border bg-card/95 text-xs shadow-lg backdrop-blur"
+				>
+					<div className={`flex flex-col gap-2 p-3 ${protocol && protocol.entries.length > 0 ? "border-b" : ""}`}>
 						<span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Graph review</span>
 						{running ? (
 							<p className="text-muted-foreground">

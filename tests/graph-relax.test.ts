@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { bboxCenter, liveSimOptions, maxDisplacement, relaxPositions, type RelaxData } from "../components/graph-relax.ts";
+import { bboxCenter, liveSimOptions, maxDisplacement, relaxPositions, type RelaxData } from "../src/core/relax.ts";
 import { DEFAULT_PHYSICS_TUNING } from "../src/core/render-settings.ts";
 
 const data: RelaxData = {

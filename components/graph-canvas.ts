@@ -57,14 +57,6 @@ import type { Simulation, SimulationLinkDatum } from "d3-force";
 import { clusterHue, type Pt } from "./cluster-geometry.ts";
 import { createLongPress } from "./long-press.ts";
 import {
-	LIVE_ALPHA_DECAY,
-	liveSimOptions,
-	maxDisplacement,
-	SIM_SETTLE_ALPHA,
-	type RelaxRequest,
-	type RelaxResult,
-} from "./graph-relax.ts";
-import {
 	CHARGE_STRENGTH,
 	CLUSTER_PULL_STRENGTH,
 	createGraphSimulation,
@@ -80,6 +72,12 @@ import {
 	type GraphRenderSettings,
 	type LayoutNode,
 	type Position,
+	LIVE_ALPHA_DECAY,
+	liveSimOptions,
+	maxDisplacement,
+	SIM_SETTLE_ALPHA,
+	type RelaxRequest,
+	type RelaxResult,
 } from "@/src/core";
 
 export type { GraphRenderSettings };
@@ -324,13 +322,15 @@ const CLICK_SLOP = 4;
 /** The same for a finger (fork, owner 2026-10-30): a tap wobbles more. */
 const TOUCH_TAP_SLOP = 10;
 /** Live-sim tuning — see the class doc comment. LIVE_ALPHA_DECAY and
- *  SIM_SETTLE_ALPHA live in graph-relax.ts (shared with the worker). */
+ *  SIM_SETTLE_ALPHA live in core/relax.ts (shared with the worker). */
 const DRAG_ALPHA_TARGET = 0.3; // d3-drag's own reheat constant
 const COMMIT_DEBOUNCE_MS = 250; // settle → ledger PUT delay (new drags cancel)
 /** The relax worker, bundled by Turbopack from the `new Worker(new URL(…))`
- *  pattern (it must stay literally in this shape for the bundler). */
+ *  pattern (it must stay literally in this shape for the bundler). It lives
+ *  in core and imports relax.ts relatively — never the core barrel, whose
+ *  modules touch `document` at load. */
 function createRelaxWorker(): Worker {
-	return new Worker(new URL("./graph-relax.worker.ts", import.meta.url));
+	return new Worker(new URL("../src/core/relax.worker.ts", import.meta.url));
 }
 
 /** Background relax (fork, owner 2026-11-10): a quiet spell before the
@@ -1986,7 +1986,7 @@ export class GraphCanvasRenderer {
 			this.simById = new Map();
 			return;
 		}
-		// One force set with the background relax (graph-relax.ts).
+		// One force set with the background relax (core/relax.ts).
 		this.sim = createGraphSimulation(data.nodes, data.edges, liveSimOptions(data, this.physicsTuning, this.simCenter));
 		this.simById = new Map(data.nodes.map((n) => [n.id, n as LayoutNode]));
 		// Hygiene (2026-09-23 fix wave): a fresh sim starts at alpha 1 and

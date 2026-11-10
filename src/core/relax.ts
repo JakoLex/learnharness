@@ -12,15 +12,11 @@
  * cheap (~2.4 ms for ~530 nodes) — the drawing was the cost. Now the open
  * relaxes in the background and the canvas only glides to the result.
  */
-import {
-	createGraphSimulation,
-	type ImpLink,
-	type LayoutEdge,
-	type LayoutNode,
-	type PhysicsTuning,
-	type Position,
-	type SimOptions,
-} from "@/src/core";
+// Relative imports only — the relax WORKER loads this module, and the core
+// barrel drags in modules that touch `document` at load (a worker has none).
+import type { Position } from "./contracts.ts";
+import { createGraphSimulation, type ImpLink, type LayoutEdge, type LayoutNode, type SimOptions } from "./layout.ts";
+import type { PhysicsTuning } from "./render-settings.ts";
 
 /** Snappier anneal than the server settle's 0.0228. */
 export const LIVE_ALPHA_DECAY = 0.05;
