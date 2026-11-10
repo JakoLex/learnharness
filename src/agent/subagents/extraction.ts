@@ -24,13 +24,35 @@ import type {
 	SessionFindings,
 } from "../../core/contracts.ts";
 import { getGraph, mergeFindings, type DerivedGraph, type EmissionStats, type GraphDeps } from "../../core/graph.ts";
-import { BRIDGE_ANCHOR } from "../../core/contracts.ts";
+import { BRIDGE_ANCHOR, isBridgeChain, type GraphNode } from "../../core/contracts.ts";
 import type { GraphStore } from "../../core/ports.ts";
 import { emit } from "../../core/events.ts";
 import { settleGraphLayout } from "../../core/layout-settle.ts";
 import { batchRuns, coverageOf, messageViewLines } from "../../core/coverage.ts";
 import { failedOutputCallIds, type LhMessage } from "../../core/native-messages.ts";
-import { bridgerGraphTools, prepareAuditorReview } from "../tools/graph.ts";
+import { bridgerGraphTools, prepareAuditorReview, proberGraphTools } from "../tools/graph.ts";
+import { CANDIDATE_PAGE_SIZE, createPropositionCandidateSearch } from "../../core/proposition-candidates.ts";
+import { sessionMarkdown } from "../../core/session-markdown.ts";
+import {
+	correctNode,
+	deleteChain,
+	mergeNodes,
+	repairChain,
+	restoreReviewBackup,
+	reviewFingerprintInput,
+	snapshotForReview,
+} from "../../core/graph-review.ts";
+import { isReviewBackup, isReviewProtocol, type ReviewNodeText, type ReviewProtocol } from "../../core/review-protocol.ts";
+import {
+	checkChainVerdicts,
+	checkCorrections,
+	checkMerges,
+	duplicatePrompt,
+	runChainReview,
+	runDuplicateReview,
+	runErrorReview,
+	type ReviewRecord,
+} from "./review.ts";
 import { runSubmitAgent, healStringifiedArrays } from "./submit-agent.ts";
 
 /**
@@ -978,6 +1000,22 @@ export interface ExtractionPipeline {
 	 *  after every completed notes import when the composition root sets
 	 *  bridgeAfterImport (the server does unless LH_BRIDGES=0). */
 	bridgeSource(sourceId: string): Promise<EmissionStats>;
+	/** The graph review (fork, owner 2026-11-10): duplicates, errors,
+	 *  chains, missing bridges — applied automatically, undoable. Starts in
+	 *  the background and returns the fresh protocol; throws
+	 *  GraphReviewError when it cannot start. */
+	startReview(): ReviewProtocol;
+	/** Restore the graph as it was before the last review — only while
+	 *  nothing else changed it since. Throws GraphReviewError otherwise. */
+	undoReview(): ReviewProtocol;
+	/** The last review's protocol (null when none ran yet). */
+	readReview(): ReviewProtocol | null;
+}
+
+/** A review that cannot start or cannot be undone — the message is for
+ *  the user (the routes answer 409 with it). */
+export class GraphReviewError extends Error {
+	override name = "GraphReviewError";
 }
 
 /** pi's per-step usage, flattened to the persisted CallUsage fields
@@ -1228,6 +1266,60 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 	 *  dock as its own job "<source>#bridge", usage billed to the source like
 	 *  an audit. A failed or aborted pass logs and merges nothing — a missing
 	 *  bridge never fails the import that triggered it. */
+	/** The bridger's work for one source — the caller holds the audit lock
+	 *  (fork, 2026-11-10: split out of runBridge so the graph review can
+	 *  bridge every source inside its own lock). Phases and usage go to
+	 *  `jobKey`'s registry row. */
+	async function bridgeLocked(
+		sourceId: string,
+		label: string | undefined,
+		jobKey: string,
+		kind: "chat" | "notes",
+		t0: number,
+	): Promise<{ merged: EmissionStats; accepted: Array<BridgeProposal> }> {
+		const signal = runningExtractions.get(jobKey)?.controller.signal;
+		const graph = getGraph(graphStore);
+		const ours = graph.nodes.filter((n) => n.provenance[0]?.chatId === sourceId);
+		if (ours.length === 0 || ours.length === graph.nodes.length) return { merged: { nodes: 0, chains: 0 }, accepted: [] }; // changed while queued
+		console.info(`[extraction ${jobKey}] bridger starting (${ours.length} of ${graph.nodes.length} nodes)`);
+		const proposals = await runBridger(
+			stageEngine("auditor", deps.auditor),
+			sourceId,
+			`THIS SOURCE: ${label ?? sourceId} (id ${sourceId}) — its ${ours.length} proposition(s):\n` +
+				ours.map((n) => `- ${n.id} :: ${n.name}\n  statement: ${n.statement.replace(/\s+/g, " ")}`).join("\n") +
+				`\n\nThe graph has ${graph.nodes.length} node(s) in all. Find the derivations that run into or out of THIS SOURCE from the other sources.`,
+			signal,
+			(usage, model, step, finishReason, tools) => {
+				recordStep(jobKey, "auditor", callUsage(usage), model);
+				console.info(`[extraction] bridger step ${step}: ${finishReason}, tools: ${tools}`);
+			},
+			bridgerGraphTools({ chatStore, graphStore }),
+			new Set(graph.nodes.map((n) => n.id)),
+		);
+		const { accepted, rejected } = validateBridges(getGraph(graphStore), sourceId, proposals);
+		for (const { proposal, why } of rejected)
+			console.info(`[extraction ${jobKey}] bridge rejected (${why}): ${proposal.premises.join(" + ")} ⇒ ${proposal.conclusion}`);
+		for (const b of accepted)
+			console.info(`[extraction ${jobKey}] bridge: ${b.premises.join(" + ")} ⇒ ${b.conclusion} — ${b.reason}`);
+		setPhase(jobKey, "merging", kind, label);
+		// coverage: [] — a bridge pass covers no source text, so no
+		// checkpoint line; the chains carry the source's provenance plus
+		// BRIDGE_ANCHOR, which keeps simplifyChains off them.
+		const merged = mergeFindings(
+			sourceId,
+			{ propositions: [], chains: accepted.map(({ premises, conclusion, reason }) => ({ premises, conclusion, note: reason })) },
+			{ links: [] },
+			{ chatStore, graphStore },
+			{ foldedAt: new Date().toISOString(), coverage: [], chainAnchor: BRIDGE_ANCHOR },
+		);
+		settleGraphLayout(graphStore);
+		console.info(
+			`[extraction ${jobKey}] bridges: ${merged.chains ?? 0} new of ${accepted.length} accepted, ` +
+				`${proposals.length} proposed (${Math.round(performance.now() - t0)}ms)`,
+		);
+		return { merged, accepted };
+	}
+
 	async function runBridge(sourceId: string, label?: string): Promise<EmissionStats> {
 		const kind = sourceId.startsWith("src_") ? "notes" : "chat";
 		const jobKey = `${sourceId}#bridge`;
@@ -1241,47 +1333,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		try {
 			const stats = await withAuditLock(jobKey, kind, label, async () => {
 				setPhase(jobKey, "bridging", kind, label);
-				const signal = runningExtractions.get(jobKey)?.controller.signal;
-				const graph = getGraph(graphStore);
-				const ours = graph.nodes.filter((n) => n.provenance[0]?.chatId === sourceId);
-				if (ours.length === 0 || ours.length === graph.nodes.length) return { nodes: 0, chains: 0 }; // changed while queued
-				console.info(`[extraction ${jobKey}] bridger starting (${ours.length} of ${graph.nodes.length} nodes)`);
-				const proposals = await runBridger(
-					stageEngine("auditor", deps.auditor),
-					sourceId,
-					`THIS SOURCE: ${label ?? sourceId} (id ${sourceId}) — its ${ours.length} proposition(s):\n` +
-						ours.map((n) => `- ${n.id} :: ${n.name}\n  statement: ${n.statement.replace(/\s+/g, " ")}`).join("\n") +
-						`\n\nThe graph has ${graph.nodes.length} node(s) in all. Find the derivations that run into or out of THIS SOURCE from the other sources.`,
-					signal,
-					(usage, model, step, finishReason, tools) => {
-						recordStep(jobKey, "auditor", callUsage(usage), model);
-						console.info(`[extraction] bridger step ${step}: ${finishReason}, tools: ${tools}`);
-					},
-					bridgerGraphTools({ chatStore, graphStore }),
-					new Set(graph.nodes.map((n) => n.id)),
-				);
-				const { accepted, rejected } = validateBridges(getGraph(graphStore), sourceId, proposals);
-				for (const { proposal, why } of rejected)
-					console.info(`[extraction ${jobKey}] bridge rejected (${why}): ${proposal.premises.join(" + ")} ⇒ ${proposal.conclusion}`);
-				for (const b of accepted)
-					console.info(`[extraction ${jobKey}] bridge: ${b.premises.join(" + ")} ⇒ ${b.conclusion} — ${b.reason}`);
-				setPhase(jobKey, "merging", kind, label);
-				// coverage: [] — a bridge pass covers no source text, so no
-				// checkpoint line; the chains carry the source's provenance plus
-				// BRIDGE_ANCHOR, which keeps simplifyChains off them.
-				const merged = mergeFindings(
-					sourceId,
-					{ propositions: [], chains: accepted.map(({ premises, conclusion, reason }) => ({ premises, conclusion, note: reason })) },
-					{ links: [] },
-					{ chatStore, graphStore },
-					{ foldedAt: new Date().toISOString(), coverage: [], chainAnchor: BRIDGE_ANCHOR },
-				);
-				settleGraphLayout(graphStore);
-				console.info(
-					`[extraction ${jobKey}] bridges: ${merged.chains ?? 0} new of ${accepted.length} accepted, ` +
-						`${proposals.length} proposed (${Math.round(performance.now() - t0)}ms)`,
-				);
-				return merged;
+				return (await bridgeLocked(sourceId, label, jobKey, kind, t0)).merged;
 			});
 			persistRunUsage(jobKey, Math.round(performance.now() - t0), stats);
 			return stats;
@@ -1780,6 +1832,303 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		}
 	}
 
-	return { runExtraction, importNotes, bridgeSource };
+	// ─── the graph review (fork, owner 2026-11-10) ─────────────────────────
+	//
+	// One background job ("review" in the dock) that holds the audit lock
+	// from the backup to the last change, so no merge of another job can
+	// interleave — undo then restores exactly the pre-review graph. Phases:
+	// duplicates → errors → chains → bridges (every source) → free settle.
+	// Verdicts are applied as they arrive (core/graph-review.ts); the
+	// protocol is saved after every batch, so an abort or failure keeps
+	// what was done, and undo still covers it.
+
+	const REVIEW_KEY = "review";
+	const REVIEW_LABEL = "Graph review";
+	const REVIEW_NODE_BATCH = 20;
+	const REVIEW_CHAIN_BATCH = 15;
+	const REVIEW_TRANSCRIPT_CHARS = 60_000;
+
+	function readReview(): ReviewProtocol | null {
+		const raw = graphStore.readReviewFile?.("protocol");
+		return isReviewProtocol(raw) ? raw : null;
+	}
+
+	function reviewFingerprint(): string {
+		return crypto.createHash("sha256").update(reviewFingerprintInput(graphStore)).digest("hex");
+	}
+
+	const nodeText = (n: Pick<GraphNode, "id" | "name" | "statement">): ReviewNodeText => ({ id: n.id, name: n.name, statement: n.statement });
+
+	function sourceLabel(sourceId: string): string {
+		if (sourceId.startsWith("src_")) return graphStore.readSources().find((s) => s.id === sourceId)?.filePath ?? sourceId;
+		return chatStore.getChat(sourceId)?.title ?? sourceId;
+	}
+
+	function startReview(): ReviewProtocol {
+		if (!graphStore.readReviewFile || !graphStore.writeReviewFile) throw new GraphReviewError("This graph cannot be reviewed.");
+		if (extractionStatuses().length > 0)
+			throw new GraphReviewError("An import, extraction or review is running. Start the review when it is done.");
+		refuseIfStagesUnready();
+		if (getGraph(graphStore).nodes.length === 0) throw new GraphReviewError("The graph is empty — nothing to review.");
+		const protocol: ReviewProtocol = {
+			startedAt: new Date().toISOString(),
+			status: "running",
+			phase: "duplicates",
+			entries: [],
+			usageLog: readReview()?.usageLog ?? [],
+		};
+		graphStore.writeReviewFile("protocol", protocol);
+		setPhase(REVIEW_KEY, "queued", "notes", REVIEW_LABEL);
+		void runReview(protocol);
+		return protocol;
+	}
+
+	async function runReview(protocol: ReviewProtocol): Promise<void> {
+		const t0 = performance.now();
+		const save = () => graphStore.writeReviewFile!("protocol", protocol);
+		try {
+			await withAuditLock(REVIEW_KEY, "notes", REVIEW_LABEL, async () => {
+				// The backup is taken INSIDE the lock: nothing merges between
+				// it and the review's first change.
+				graphStore.writeReviewFile!("backup", snapshotForReview(graphStore));
+				const signal = runningExtractions.get(REVIEW_KEY)?.controller.signal;
+				const engine = stageEngine("auditor", deps.auditor);
+				const onStep = (stage: string) => (usage: Usage, model: string, step: number, finishReason: string, tools: string) => {
+					recordStep(REVIEW_KEY, "auditor", callUsage(usage), model);
+					console.info(`[review] ${stage} step ${step}: ${finishReason}, tools: ${tools}`);
+				};
+				setPhase(REVIEW_KEY, "auditing", "notes", REVIEW_LABEL);
+
+				// 1. Duplicates: every node with its five BM25 candidates, each
+				//    unordered pair shown once.
+				protocol.phase = "duplicates";
+				save();
+				{
+					const nodes = getGraph(graphStore).nodes;
+					const search = createPropositionCandidateSearch(nodes);
+					const seenPairs = new Set<string>();
+					const items: Array<{ record: ReviewRecord; candidates: ReviewRecord[] }> = [];
+					for (const n of nodes) {
+						const fresh = search({ id: n.id, name: n.name, statement: n.statement, aliases: n.aliases })
+							.filter((hit) => hit.node.id !== n.id)
+							.slice(0, CANDIDATE_PAGE_SIZE)
+							.filter((hit) => {
+								const key = [n.id, hit.node.id].sort().join("\u0000");
+								if (seenPairs.has(key)) return false;
+								seenPairs.add(key);
+								return true;
+							});
+						if (fresh.length > 0) items.push({ record: nodeText(n), candidates: fresh.map((hit) => nodeText(hit.node)) });
+					}
+					for (let i = 0; i < items.length; i += REVIEW_NODE_BATCH) {
+						const live = new Set(getGraph(graphStore).nodes.map((n) => n.id));
+						const batch = items
+							.slice(i, i + REVIEW_NODE_BATCH)
+							.filter((item) => live.has(item.record.id))
+							.map((item) => ({ ...item, candidates: item.candidates.filter((c) => live.has(c.id)) }))
+							.filter((item) => item.candidates.length > 0);
+						if (batch.length === 0) continue;
+						const shown = new Map<string, ReviewRecord>();
+						const pairs = new Set<string>();
+						for (const { record, candidates } of batch) {
+							shown.set(record.id, record);
+							for (const c of candidates) {
+								shown.set(c.id, c);
+								pairs.add([record.id, c.id].sort().join("\u0000"));
+							}
+						}
+						const merges = await runDuplicateReview({
+							engine,
+							prompt: duplicatePrompt(batch),
+							signal,
+							onStep: onStep("duplicates"),
+							validate: (m) => checkMerges(m, shown, pairs),
+						});
+						for (const m of merges) {
+							const current = new Map(getGraph(graphStore).nodes.map((n) => [n.id, n]));
+							const [a, b] = m.ids as [string, string];
+							const na = current.get(a);
+							const nb = current.get(b);
+							if (!na || !nb) continue; // an earlier merge took one of them
+							const result = mergeNodes(graphStore, { ids: [a, b], name: m.name, statement: m.statement });
+							if (!result) continue;
+							const [kept, gone] = result.survivor === a ? [na, nb] : [nb, na];
+							protocol.entries.push({
+								kind: "merge",
+								survivor: result.survivor,
+								removed: nodeText(gone),
+								before: nodeText(kept),
+								after: { id: result.survivor, name: m.name, statement: m.statement },
+								reason: m.reason,
+							});
+							console.info(`[review] merged ${gone.id} into ${result.survivor}: ${m.reason}`);
+						}
+						save();
+					}
+				}
+
+				// 2. Errors: per birth source, against its text, its chat, or
+				//    the model's own knowledge.
+				protocol.phase = "errors";
+				save();
+				{
+					const bySource = new Map<string, GraphNode[]>();
+					for (const n of getGraph(graphStore).nodes) {
+						const src = n.provenance[0]?.chatId ?? "";
+						const list = bySource.get(src);
+						if (list) list.push(n);
+						else bySource.set(src, [n]);
+					}
+					const readSource = proberGraphTools({ chatStore, graphStore }).read_source;
+					for (const [sourceId, members] of bySource) {
+						const isFile = sourceId.startsWith("src_");
+						const label = sourceId ? sourceLabel(sourceId) : "unknown";
+						const hasText = isFile && graphStore.readSourceText?.(sourceId) != null && readSource !== undefined;
+						const chat = !isFile && sourceId ? chatStore.getChat(sourceId) : null;
+						let head: string;
+						if (hasText) head = `SOURCE: ${label} — readable with read_source (source id ${sourceId}).`;
+						else if (chat) {
+							const transcript = sessionMarkdown(chat.messages, { title: chat.title });
+							head =
+								`SOURCE: the tutoring chat "${label}". Its transcript:\n\n` +
+								(transcript.length > REVIEW_TRANSCRIPT_CHARS ? `${transcript.slice(0, REVIEW_TRANSCRIPT_CHARS)}\n[… transcript cut]` : transcript);
+						} else head = `SOURCE: ${label} — its text is not available; check against your subject knowledge.`;
+						for (let i = 0; i < members.length; i += REVIEW_NODE_BATCH) {
+							const live = new Map(getGraph(graphStore).nodes.map((n) => [n.id, n]));
+							const batch = members.slice(i, i + REVIEW_NODE_BATCH).flatMap((n) => live.get(n.id) ?? []);
+							if (batch.length === 0) continue;
+							const ids = new Set(batch.map((n) => n.id));
+							const corrections = await runErrorReview({
+								engine,
+								prompt:
+									`${head}\n\nPROPOSITIONS:\n` +
+									batch.map((n) => `- ${n.id} :: ${n.name}\n  statement: ${n.statement}`).join("\n"),
+								signal,
+								onStep: onStep("errors"),
+								tools: hasText && readSource ? { read_source: readSource } : {},
+								validate: (c) => checkCorrections(c, ids),
+							});
+							for (const c of corrections) {
+								const before = correctNode(graphStore, { id: c.id, name: c.name, statement: c.statement });
+								if (!before) continue;
+								const after = getGraph(graphStore).nodes.find((n) => n.id === c.id)!;
+								protocol.entries.push({ kind: "correct", id: c.id, before: { id: c.id, ...before }, after: nodeText(after), reason: c.reason });
+								console.info(`[review] corrected ${c.id}: ${c.reason}`);
+							}
+							save();
+						}
+					}
+				}
+
+				// 3. Chains: each with its members' full statements.
+				protocol.phase = "chains";
+				save();
+				{
+					const graph = getGraph(graphStore);
+					const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+					const chains = graph.chains.filter((c) => byId.has(c.conclusion) && c.premises.every((p) => byId.has(p)));
+					const tools = bridgerGraphTools({ chatStore, graphStore });
+					const member = (id: string) => `${id} :: ${byId.get(id)!.name}\n      statement: ${byId.get(id)!.statement.replace(/\s+/g, " ")}`;
+					for (let i = 0; i < chains.length; i += REVIEW_CHAIN_BATCH) {
+						const batch = chains.slice(i, i + REVIEW_CHAIN_BATCH);
+						const chainIds = new Set(batch.map((c) => c.id));
+						const nodeIds = new Set(getGraph(graphStore).nodes.map((n) => n.id));
+						const verdicts = await runChainReview({
+							engine,
+							prompt: batch
+								.map(
+									(c) =>
+										`CHAIN ${c.id}${isBridgeChain(c) ? " (cross-source bridge)" : ""}\n  premises:\n` +
+										c.premises.map((p) => `  - ${member(p)}`).join("\n") +
+										`\n  conclusion: ${member(c.conclusion)}`,
+								)
+								.join("\n\n"),
+							signal,
+							onStep: onStep("chains"),
+							tools,
+							validate: (v) => checkChainVerdicts(v, chainIds, nodeIds),
+						});
+						for (const r of verdicts.repairs) {
+							const chain = batch.find((c) => c.id === r.chainId)!;
+							const before = repairChain(graphStore, { chainId: r.chainId, premises: r.premises });
+							if (!before) continue;
+							protocol.entries.push({ kind: "chain-repair", chainId: r.chainId, conclusion: chain.conclusion, before, after: [...new Set(r.premises)], reason: r.reason });
+							console.info(`[review] repaired ${r.chainId}: ${r.reason}`);
+						}
+						for (const d of verdicts.deletions) {
+							const chain = batch.find((c) => c.id === d.chainId)!;
+							if (!deleteChain(graphStore, d.chainId)) continue;
+							protocol.entries.push({ kind: "chain-delete", chainId: d.chainId, premises: chain.premises, conclusion: chain.conclusion, reason: d.reason });
+							console.info(`[review] deleted ${d.chainId}: ${d.reason}`);
+						}
+						save();
+					}
+				}
+
+				// 4. Bridges: the bridger for every source (imports and chats),
+				//    inside this lock.
+				protocol.phase = "bridges";
+				save();
+				setPhase(REVIEW_KEY, "bridging", "notes", REVIEW_LABEL);
+				{
+					const sources = [...new Set(getGraph(graphStore).nodes.flatMap((n) => (n.provenance[0]?.chatId ? [n.provenance[0].chatId] : [])))];
+					for (const sourceId of sources) {
+						const before = new Set(getGraph(graphStore).chains.map((c) => c.id));
+						await bridgeLocked(sourceId, sourceLabel(sourceId), REVIEW_KEY, "notes", performance.now());
+						for (const c of getGraph(graphStore).chains) {
+							if (before.has(c.id) || !isBridgeChain(c)) continue;
+							protocol.entries.push({ kind: "bridge", chainId: c.id, premises: c.premises, conclusion: c.conclusion, reason: c.note ?? "" });
+						}
+						save();
+					}
+				}
+
+				// 5. Layout: one free settle over the reviewed graph.
+				protocol.phase = "layout";
+				settleGraphLayout(graphStore, { free: true });
+			});
+			protocol.status = "done";
+		} catch (err) {
+			protocol.status = "failed";
+			protocol.error = err instanceof Error && err.name === "AbortError" ? "aborted" : err instanceof Error ? err.message : String(err);
+			console.error("[review] failed:", err);
+		} finally {
+			protocol.finishedAt = new Date().toISOString();
+			protocol.fingerprint = reviewFingerprint();
+			const run = runningExtractions.get(REVIEW_KEY);
+			protocol.usageLog = [
+				...(protocol.usageLog ?? []),
+				{
+					startedAt: run?.startedAt ?? Date.now(),
+					at: protocol.finishedAt,
+					durationMs: Math.round(performance.now() - t0),
+					stages: {
+						extractor: { model: "unknown", steps: [] },
+						auditor: run?.usage.auditor ?? { model: "unknown", steps: [] },
+					},
+				},
+			];
+			save();
+			finishExtraction(REVIEW_KEY);
+		}
+	}
+
+	function undoReview(): ReviewProtocol {
+		const protocol = readReview();
+		if (!protocol || (protocol.status !== "done" && protocol.status !== "failed"))
+			throw new GraphReviewError("There is no finished review to undo.");
+		if (extractionStatuses().length > 0) throw new GraphReviewError("An import or extraction is running. Undo when it is done.");
+		if (!protocol.fingerprint || protocol.fingerprint !== reviewFingerprint())
+			throw new GraphReviewError("The graph changed after the review (an import or a chat), so the review can no longer be undone.");
+		const backup = graphStore.readReviewFile?.("backup");
+		if (!isReviewBackup(backup)) throw new GraphReviewError("The pre-review backup is missing.");
+		restoreReviewBackup(graphStore, backup);
+		protocol.status = "undone";
+		graphStore.writeReviewFile!("protocol", protocol);
+		emit("activity-changed", {});
+		return protocol;
+	}
+
+	return { runExtraction, importNotes, bridgeSource, startReview, undoReview, readReview };
 }
 

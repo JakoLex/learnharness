@@ -147,6 +147,14 @@ export function sourcesFile(): string {
 export function sourceTextFile(id: string): string {
 	return path.join(PATHS.graph, "source-text", `${id}.md`);
 }
+/** Fork (owner, 2026-11-10): the last graph review's protocol, and the
+ *  ledgers as they stood before it (undo). */
+export function reviewFile(): string {
+	return path.join(PATHS.graph, "review.json");
+}
+export function reviewBackupFile(): string {
+	return path.join(PATHS.graph, "review-backup.json");
+}
 /** Presentation-only source names/folder placement; never extraction identity. */
 export function sourceOrganizationFile(): string {
 	return path.join(PATHS.graph, "source-organization.json");

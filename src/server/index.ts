@@ -10,7 +10,7 @@ export * from "./chats.ts";
 export * from "./graph.ts";
 export * from "./source-organization.ts";
 export * from "./source-deletion.ts";
-export { NotesImportError } from "../agent/subagents/extraction.ts";
+export { GraphReviewError, NotesImportError } from "../agent/subagents/extraction.ts";
 export { convertPdf } from "../agent/subagents/pdf-ops.ts";
 export { joinPages } from "../agent/subagents/pdf-markdown.ts";
 export * from "./commit-positions.ts";

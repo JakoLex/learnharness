@@ -35,6 +35,7 @@ export * from "./events.ts";
 // client bundle (verified 2026-09-13: chunks contained it while this
 // line existed). Same logic as layout-settle.ts below.
 export * from "./layout.ts";
+export * from "./review-protocol.ts";
 export * from "./plan-tree.ts";
 export * from "./phases.ts";
 export * from "./pending.ts";

@@ -4,6 +4,7 @@ import type { GraphSnapshot } from "../core/contracts.ts";
 import type { GraphCostSummary } from "../core/cost-summary.ts";
 import { graphCostSummary } from "../core/cost-summary.ts";
 import { graphSnapshot } from "../core/graph.ts";
+import { isReviewProtocol } from "../core/review-protocol.ts";
 import { birthSessionPartition } from "../core/session-clusters.ts";
 import {
 	deleteNodeTraces,
@@ -44,7 +45,10 @@ export function graphCosts(): GraphCostSummary {
 		.readSources()
 		.filter((s) => s.extractions?.length)
 		.map((s) => ({ filePath: s.filePath, extractions: s.extractions! }));
-	return graphCostSummary({ chats, sources }, callCost);
+	// Fork (2026-11-10): graph reviews bill as their own stage.
+	const review = stores.graphStore.readReviewFile?.("protocol");
+	const reviews = isReviewProtocol(review) ? (review.usageLog ?? []) : [];
+	return graphCostSummary({ chats, sources, reviews }, callCost);
 }
 
 /** The graph's version stamp (session-deletion wave 6): the max mtime

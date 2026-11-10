@@ -43,8 +43,9 @@ export interface RecentRun {
 	/** ISO wall-clock. */
 	at: string;
 	durationMs: number;
-	/** "extraction" covers both front doors (chat + notes). */
-	kind: "extraction";
+	/** "extraction" covers both front doors (chat + notes); "review" is a
+	 *  graph review (fork, 2026-11-10). */
+	kind: "extraction" | "review";
 	/** Chat title / source file path / fixed label for naming runs. */
 	title: string;
 	/** Whole-run inferred USD; null only when EVERY stage is unpriced. */
@@ -69,6 +70,9 @@ export interface GraphCostSummary {
 	stages: {
 		extraction: StageCost;
 		audit: StageCost;
+		/** Fork (owner, 2026-11-10): graph reviews (auditor-role calls).
+		 *  Optional in the type only: summaries built before reviews. */
+		review?: StageCost;
 	};
 	/** Newest first, capped at `recentCap` (default 10). */
 	runs: RecentRun[];
@@ -80,6 +84,9 @@ export interface CostSummaryInput {
 	chats: { title: string; extractions: ExtractionRunUsage[] }[];
 	/** Notes-front-door runs: imported file path + the source's usage log. */
 	sources: { filePath: string; extractions: ExtractionRunUsage[] }[];
+	/** Graph reviews (fork, 2026-11-10): the protocol's usage log; the
+	 *  steps sit in each run's auditor stage. */
+	reviews?: ExtractionRunUsage[];
 	recentCap?: number;
 }
 
@@ -175,18 +182,40 @@ export function graphCostSummary(input: CostSummaryInput, price: CallPricer): Gr
 	for (const source of input.sources) {
 		for (const run of source.extractions) foldExtractionRun(run, source.filePath);
 	}
+	const review = emptyStage();
+	for (const run of input.reviews ?? []) {
+		const stage = run.stages?.auditor ?? { model: "unknown", steps: [] };
+		review.runs++;
+		mergeTokens(review.tokens, stage.steps);
+		const dollars = stageDollars(stage.model, stage.steps, price);
+		if (isSubscriptionModel(stage.model)) {
+			review.subscriptionRuns = (review.subscriptionRuns ?? 0) + 1;
+			review.subscriptionProviders = [...new Set([...(review.subscriptionProviders ?? []), ...subscriptionLabels([stage.model])])];
+		} else if (dollars === null) review.unpricedRuns++;
+		else review.dollars += dollars;
+		runs.push({
+			...(isSubscriptionModel(stage.model) ? { subscriptionRuns: 1, subscriptionProviders: subscriptionLabels([stage.model]) } : {}),
+			startedAt: run.startedAt,
+			at: run.at,
+			durationMs: run.durationMs,
+			kind: "review",
+			title: "Graph review",
+			dollars,
+			tokens: sumSteps(stage.steps),
+		});
+	}
 
 	runs.sort((a, b) => b.startedAt - a.startedAt);
 	const capped = runs.slice(0, input.recentCap ?? 10);
 
 	// A run is "unpriced" when it billed nothing countable at all.
 	const unpricedRuns = runs.filter((r) => r.dollars === null && (r.subscriptionRuns ?? 0) < 2).length;
-	const subscriptionRuns = (extraction.subscriptionRuns ?? 0) + (audit.subscriptionRuns ?? 0);
+	const subscriptionRuns = (extraction.subscriptionRuns ?? 0) + (audit.subscriptionRuns ?? 0) + (review.subscriptionRuns ?? 0);
 	return {
-		...(subscriptionRuns ? { subscriptionRuns, subscriptionProviders: [...new Set([...(extraction.subscriptionProviders ?? []), ...(audit.subscriptionProviders ?? [])])] } : {}),
-		totalDollars: extraction.dollars + audit.dollars,
+		...(subscriptionRuns ? { subscriptionRuns, subscriptionProviders: [...new Set([...(extraction.subscriptionProviders ?? []), ...(audit.subscriptionProviders ?? []), ...(review.subscriptionProviders ?? [])])] } : {}),
+		totalDollars: extraction.dollars + audit.dollars + review.dollars,
 		unpricedRuns,
-		stages: { extraction, audit },
+		stages: { extraction, audit, review },
 		runs: capped,
 	};
 }

@@ -110,6 +110,12 @@ export interface GraphStore {
 	writeSourceText?(id: string, text: string): void;
 	/** The kept text of one source, or null when none was kept. */
 	readSourceText?(id: string): string | null;
+	/** Fork (owner, 2026-11-10): the last graph review's protocol and its
+	 *  pre-review backup (config.reviewFile / reviewBackupFile) — opaque
+	 *  JSON to the store; core/graph-review.ts owns the shapes. Optional —
+	 *  test fakes without them simply cannot review. */
+	readReviewFile?(which: "protocol" | "backup"): unknown;
+	writeReviewFile?(which: "protocol" | "backup", value: unknown): void;
 	/** Remove imported-source bookkeeping only; the service removes graph traces first. */
 	deleteSources(ids: ReadonlySet<string>): number;
 	/** Append one run's usage to a source record — idempotent per

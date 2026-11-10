@@ -1254,6 +1254,20 @@ export class GraphCanvasRenderer {
 		if (w >= 10 && h >= 10) this.kFit = fitTransform(this.worldBBox, w, h, 40).k;
 	}
 
+	/** Center the camera on a node (keeping the zoom) and open its card —
+	 *  fork, owner 2026-11-10: the review protocol's entries. */
+	focusNode(nodeId: string): void {
+		const node = this.nodeById.get(nodeId);
+		if (!node) return;
+		const w = this.canvas.clientWidth;
+		const h = this.canvas.clientHeight;
+		const k = this.transform.k;
+		this.zoomTarget = null;
+		select(this.canvas).call(this.zoomBehavior.transform, zoomIdentity.translate(w / 2 - node.x * k, h / 2 - node.y * k).scale(k));
+		// After the camera move: its onCameraMove closes any open card.
+		this.callbacks.onSelect(nodeId, { x: w / 2, y: h / 2 });
+	}
+
 	destroy(): void {
 		if (this.frameId !== null) cancelAnimationFrame(this.frameId);
 		if (this.commitTimer) clearTimeout(this.commitTimer);

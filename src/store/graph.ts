@@ -34,7 +34,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { LEDGER_FILES, positionsFile, sourcesFile, sourceTextFile } from "../../config.ts";
+import { LEDGER_FILES, positionsFile, reviewBackupFile, reviewFile, sourcesFile, sourceTextFile } from "../../config.ts";
 import { assertGraphFormat, ensureGraphFormat } from "./graph-format.ts";
 import { removeLeftoverTemps, writeFileAtomicSync } from "./atomic-write.ts";
 import type {
@@ -213,6 +213,20 @@ export const graphStore: GraphStore = {
 		} catch {
 			return null;
 		}
+	},
+
+	// ── the graph review (fork, owner 2026-11-10) ──
+	readReviewFile(which: "protocol" | "backup"): unknown {
+		try {
+			return JSON.parse(fs.readFileSync(which === "protocol" ? reviewFile() : reviewBackupFile(), "utf-8"));
+		} catch {
+			return null;
+		}
+	},
+	writeReviewFile(which: "protocol" | "backup", value: unknown): void {
+		const file = which === "protocol" ? reviewFile() : reviewBackupFile();
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		writeFileAtomicSync(file, JSON.stringify(value, null, which === "protocol" ? "\t" : undefined));
 	},
 
 	// ── the layout ledger (config.positionsFile() — a JSON map) ──

@@ -78,6 +78,7 @@ import { useServerEvent, useServerResync } from "@/components/server-events";
 import { MenuShell } from "@/components/menu-shell.tsx";
 import { DeleteNodeDialog } from "@/components/delete-node-dialog.tsx";
 import { ChainTableOverlay } from "@/components/chain-table.tsx";
+import { GraphReviewControl } from "@/components/graph-review.tsx";
 import { Hint } from "@/components/ui/hint";
 import { cn } from "@/lib/utils";
 import {
@@ -311,7 +312,7 @@ function graphProviders(value: { subscriptionRuns?: number; subscriptionProvider
 	return value.subscriptionProviders ?? ((value.subscriptionRuns ?? 0) > 0 ? ["ChatGPT"] : []);
 }
 function graphUsageLabel(costs: Pick<GraphCostSummary, "stages">): string {
-	const stages = [costs.stages.extraction, costs.stages.audit];
+	const stages = [costs.stages.extraction, costs.stages.audit, ...(costs.stages.review ? [costs.stages.review] : [])];
 	const providers = [...new Set(stages.flatMap(graphProviders))];
 	const priced = stages.some((stage) => stage.runs - stage.unpricedRuns - (stage.subscriptionRuns ?? 0) > 0);
 	const dollars = displayCostTotals(costs).totalDollars;
@@ -334,8 +335,9 @@ export function displayCostTotals(costs: Pick<GraphCostSummary, "stages">): {
 	// The two live stages (the spine came and went on one day,
 	// 2026-09-30 — digest-aware extraction replaced it).
 	return {
-		totalDollars: costs.stages.extraction.dollars + costs.stages.audit.dollars,
-		unpricedRuns: costs.stages.extraction.unpricedRuns + costs.stages.audit.unpricedRuns,
+		// Fork (2026-11-10): plus graph reviews.
+		totalDollars: costs.stages.extraction.dollars + costs.stages.audit.dollars + (costs.stages.review?.dollars ?? 0),
+		unpricedRuns: costs.stages.extraction.unpricedRuns + costs.stages.audit.unpricedRuns + (costs.stages.review?.unpricedRuns ?? 0),
 	};
 }
 
@@ -395,6 +397,7 @@ function GraphCostPanel({ costs }: { costs: GraphCostSummary }) {
 	const stageRows: [string, GraphCostSummary["stages"]["extraction"]][] = [
 		["Extraction", costs.stages.extraction],
 		["Audit", costs.stages.audit],
+		...(costs.stages.review ? [["Review", costs.stages.review] as [string, GraphCostSummary["stages"]["extraction"]]] : []),
 	];
 	// The displayed figures come from displayCostTotals (naming excluded —
 	// the pill and this panel must agree).
@@ -868,6 +871,7 @@ export function GraphChromeRow({
 	settings,
 	changeSettings,
 	onOpenChains,
+	review,
 }: {
 	isEmpty: boolean;
 	query: string;
@@ -883,6 +887,9 @@ export function GraphChromeRow({
 	/** Opens the chain table overlay (the chains-overlay plan,
 	 *  2026-09-29). */
 	onOpenChains: () => void;
+	/** The graph review control's wiring (fork, 2026-11-10); absent = no
+	 *  review button. */
+	review?: React.ComponentProps<typeof GraphReviewControl>;
 }) {
 	// Phone bar (fork, owner 2026-10-30): below `md` the row is icons only
 	// and the search is a magnifier-sized box that widens while focused or
@@ -922,7 +929,7 @@ export function GraphChromeRow({
 			)}
 			{/* The chain table (chains overlay, owner plan 2026-09-29). Own
 			    container (36px band), between the search and Import. */}
-			<div className="graph-chrome-fade-in shrink-0 rounded-xl border bg-card/85 px-1 py-[3px] shadow-lg backdrop-blur">
+			<div className="graph-chrome-fade-in flex shrink-0 items-center rounded-xl border bg-card/85 px-1 py-[3px] shadow-lg backdrop-blur">
 					<Hint label="Every reasoning chain" side="bottom">
 						<button
 							type="button"
@@ -934,7 +941,11 @@ export function GraphChromeRow({
 							<span className="max-md:sr-only">Chains</span>
 						</button>
 					</Hint>
+					{/* The graph review (fork, owner 2026-11-10) shares the
+					    chains box: same gate, same fade. */}
+					{review && <GraphReviewControl {...review} />}
 				</div>
+
 			{/* Import notes — its own container (36px, header band); ALWAYS
 			    rendered (the empty-graph ruling above — the entry point). */}
 			<NotesImportControl importing={importing} onImportFiles={onImportFiles} iconOnPhone />
@@ -1064,6 +1075,11 @@ export function GraphView({
 	// Fetch the derived graph. Re-runs when a background pipeline run
 	// finishes (refreshTick) — its merges just landed in the ledger.
 	const [refreshTick, setRefreshTick] = useState(0);
+	// The review protocol names nodes by id (fork, 2026-11-10).
+	const reviewNames = useMemo(
+		() => new Map((snapshot?.propositions ?? []).map((n) => [n.id, n.name])),
+		[snapshot],
+	);
 	// The chain table overlay (chains-overlay plan, 2026-09-29) —
 	// component-local: a browsing surface, not graph state.
 	const [chainsOpen, setChainsOpen] = useState(false);
@@ -1631,6 +1647,11 @@ export function GraphView({
 					settings={settings}
 					changeSettings={changeSettings}
 					onOpenChains={() => setChainsOpen(true)}
+					review={{
+						names: reviewNames,
+						onFocusNode: (id) => rendererRef.current?.focusNode(id),
+						onGraphChanged: () => setRefreshTick((t) => t + 1),
+					}}
 				/>
 			</div>
 
