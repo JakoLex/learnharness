@@ -452,7 +452,12 @@ arguments. The tool's field descriptions carry the details.
 
 LANGUAGE: write every name, statement and alias in the language the source itself is written in — a
 German source gives German names and statements. Never translate into English; keep the source's technical
-terms.`,
+terms.
+
+NOTATION: the language rule covers words, not formulas. Keep every symbol the source uses — the same letter for
+each space, operator and index (a source's 𝓖 stays 𝓖, never another letter) — and never translate a formula or a
+LaTeX command. Write formulas in Unicode: λ̄ for the conjugate of a single symbol, conj(…) for the conjugate of a
+longer expression, closure(…) for a closure.`,
 } as const;
 
 function composeExtractionInstructions(preamble: string, goal: string, selection: string): string {
@@ -1997,7 +2002,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 							const live = new Map(getGraph(graphStore).nodes.map((n) => [n.id, n]));
 							const batch = members.slice(i, i + REVIEW_NODE_BATCH).flatMap((n) => live.get(n.id) ?? []);
 							if (batch.length === 0) continue;
-							const ids = new Set(batch.map((n) => n.id));
+							const shown = new Map(batch.map((n) => [n.id, { name: n.name, statement: n.statement }]));
 							const corrections = await runErrorReview({
 								engine,
 								prompt:
@@ -2006,7 +2011,7 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 								signal,
 								onStep: onStep("errors"),
 								tools: hasText && readSource ? { read_source: readSource } : {},
-								validate: (c) => checkCorrections(c, ids),
+								validate: (c) => checkCorrections(c, shown),
 							});
 							for (const c of corrections) {
 								const before = correctNode(graphStore, { id: c.id, name: c.name, statement: c.statement });

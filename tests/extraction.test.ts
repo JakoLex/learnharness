@@ -1499,10 +1499,12 @@ describe("the extractor redesign (owner, 2026-09-30): chains are the deliverable
 		// Original UTF-8 snapshot, including every newline, preamble and the
 		// session-only anchor rule. Notes-only changes must not alter it.
 		// Fork: upstream's snapshot plus the LANGUAGE rule (keep the source's
-		// language); without it the hash is upstream's a8bddd7d….
+		// language) and the NOTATION rule (owner, 2026-11-11: formulas and
+		// symbols as the source writes them); without both the hash is
+		// upstream's a8bddd7d…, with LANGUAGE alone 13a08da5….
 		assert.equal(
 			createHash("sha256").update(EXTRACTOR_INSTRUCTIONS, "utf8").digest("hex"),
-			"13a08da53b15df811509f04df80f940a75e0efd930ec92acaf8d983143e191ae",
+			"a058741ffc581218ffe3d989d3c66bf2b608d59c3fd655dd811e32268f5a8923",
 		);
 	});
 
@@ -2169,6 +2171,8 @@ describe("digest-aware serialized extraction (the extractor is the assembler)", 
 		assert.match(EXTRACTION_CORE.entailment, /[Ee]ntailment is the\s+only link that earns a\s+chain/);
 		assert.match(EXTRACTION_CORE.continuation, /build\s+on it\. Reference an existing idea by its id/);
 		assert.match(EXTRACTION_CORE.submission, /OR existing ids from THE GRAPH SO FAR, verbatim/);
+		// Owner, 2026-11-11: the language rule once turned \overline into "überline" and 𝓖 into 𝓢.
+		assert.match(EXTRACTION_CORE.submission, /NOTATION: the language rule covers words, not formulas/);
 		assert.match(EXTRACTOR_INSTRUCTIONS, /THE GOAL: uncover the source's CORE IDEAS and show how everything derives from the foundations/);
 		assert.match(EXTRACTOR_INSTRUCTIONS, /examples,\s+notation glosses, and restatements that no argument needs are not core ideas/);
 		for (const prompt of [EXTRACTOR_INSTRUCTIONS, NOTES_EXTRACTOR_INSTRUCTIONS]) {

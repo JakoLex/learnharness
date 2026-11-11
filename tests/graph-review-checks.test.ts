@@ -34,14 +34,38 @@ describe("checkMerges", () => {
 });
 
 describe("checkCorrections", () => {
-	const ids = new Set(["a", "b"]);
-	it("accepts listed ids with a change", () => {
-		assert.equal(checkCorrections([{ id: "a", statement: "fixed", reason: "index" }], ids), null);
+	const records = new Map([
+		["a", { name: "Normabschätzung", statement: "Für alle x ∈ 𝓗 gilt ‖Tx‖_𝓖 ≤ ‖T‖·‖x‖_𝓗." }],
+		["b", { name: "B", statement: "statement b" }],
+	]);
+	it("accepts listed ids with a change at the quoted passage", () => {
+		assert.equal(checkCorrections([{ id: "b", wrong: "statement b", statement: "fixed", reason: "index" }], records), null);
+		assert.equal(checkCorrections([{ id: "b", wrong: "B", name: "Kern", reason: "name" }], records), null);
+	});
+	it("compares whitespace runs as one space", () => {
+		assert.equal(checkCorrections([{ id: "b", wrong: "statement\n  b", statement: "fixed", reason: "" }], records), null);
 	});
 	it("refuses unknown ids, duplicates and empty corrections", () => {
-		assert.match(checkCorrections([{ id: "zz", statement: "x", reason: "" }], ids)!, /Unknown/);
-		assert.match(checkCorrections([{ id: "a", statement: "x", reason: "" }, { id: "a", name: "y", reason: "" }], ids)!, /twice/);
-		assert.match(checkCorrections([{ id: "a", reason: "nothing" }], ids)!, /changes nothing/);
+		assert.match(checkCorrections([{ id: "zz", wrong: "x", statement: "x", reason: "" }], records)!, /Unknown/);
+		assert.match(
+			checkCorrections([{ id: "b", wrong: "b", statement: "x", reason: "" }, { id: "b", wrong: "B", name: "y", reason: "" }], records)!,
+			/twice/,
+		);
+		assert.match(checkCorrections([{ id: "b", wrong: "b", reason: "nothing" }], records)!, /changes nothing/);
+	});
+	it("refuses a correction without a quote, or quoting text that is not there", () => {
+		assert.match(checkCorrections([{ id: "b", wrong: " ", statement: "x", reason: "" }], records)!, /does not quote/);
+		// The live failure: a quantifier "für alle x ∈ 𝓢" the statement never had.
+		assert.match(
+			checkCorrections([{ id: "a", wrong: "für alle x ∈ 𝓢", statement: "Für alle x ∈ 𝓗 gilt ‖Tx‖_𝓖 ≤ ‖T‖·‖x‖_𝓖.", reason: "" }], records)!,
+			/is not in the name or statement/,
+		);
+	});
+	it("refuses a correction that leaves its quoted passage untouched", () => {
+		assert.match(
+			checkCorrections([{ id: "a", wrong: "x ∈ 𝓗", statement: "Für alle x ∈ 𝓗 gilt ‖Tx‖_𝓖 ≤ ‖T‖·‖x‖_𝓖.", reason: "" }], records)!,
+			/still contains/,
+		);
 	});
 });
 

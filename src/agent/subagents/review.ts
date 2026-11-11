@@ -145,27 +145,32 @@ How to check:
 - If no source is available, check against your own subject knowledge.
 
 What counts as an error (fix it):
-- a wrong formula, index, space, quantifier or condition (e.g. ‖x‖_𝓢 where the source has ‖x‖_𝓗);
+- a wrong formula, index, space, quantifier or condition — something that differs from the source;
 - a statement that contradicts the source, or a claim that is false;
-- extraction debris: self-corrections ("… Korrektur: …"), cut-off sentences, broken LaTeX (e.g. "überline{λ}"
-  for λ̄);
+- extraction debris: self-corrections ("… Korrektur: …"), cut-off sentences, broken or raw LaTeX (e.g.
+  "überline{λ}" or "\\overline{λ}" for λ̄);
 - a name that does not match its statement.
 
 What is NOT an error (leave it): style, wording you would phrase differently, a statement that is correct but less
 complete than the source, notation that differs from the source but is correct and consistent.
 
+Point at the error: copy the wrong passage verbatim from the name or statement into "wrong". If you cannot point at
+a passage that is wrong, there is no error — leave the proposition.
+
 How to fix: change as little as possible and keep the source's language and notation. Keep the proposition's
 claim where it can be repaired. If the claim itself is false, rewrite it into the correct statement about the same
-subject.
+subject. Write formulas as the graph does: Unicode symbols, λ̄ for the conjugate of a single symbol, conj(…) for
+the conjugate of a longer expression, closure(…) for a closure — never LaTeX commands.
 
-Complete the task by CALLING submit_corrections with "corrections": [{ "id": <id>, "name"?: <new name>,
-"statement"?: <new statement>, "reason": <one sentence: what was wrong> }]. Give only the fields you change. Use
-"corrections": [] when everything is correct.`;
+Complete the task by CALLING submit_corrections with "corrections": [{ "id": <id>, "wrong": <the wrong passage,
+verbatim>, "name"?: <new name>, "statement"?: <new statement>, "reason": <one sentence: what was wrong> }]. Give
+only the fields you change. Use "corrections": [] when everything is correct.`;
 
 const correctionSchema = Type.Object({
 	corrections: Type.Array(
 		Type.Object({
 			id: Type.String({ description: "The proposition's id, verbatim." }),
+			wrong: Type.String({ description: "The wrong passage, copied verbatim from the proposition's current name or statement." }),
 			name: Type.Optional(Type.String({ description: "The corrected name — only when the name changes." })),
 			statement: Type.Optional(Type.String({ description: "The corrected statement — only when the statement changes." })),
 			reason: Type.String({ description: "One sentence: what was wrong." }),
@@ -175,13 +180,41 @@ const correctionSchema = Type.Object({
 });
 export type CorrectionProposal = Static<typeof correctionSchema>["corrections"][number];
 
-export function checkCorrections(corrections: readonly CorrectionProposal[], ids: ReadonlySet<string>): string | null {
+/** Occurrences of `needle` in `hay`, whitespace runs compared as one space. */
+function occurrences(hay: string, needle: string): number {
+	const h = hay.replace(/\s+/g, " ");
+	const n = needle.replace(/\s+/g, " ").trim();
+	if (!n) return 0;
+	let count = 0;
+	for (let at = h.indexOf(n); at >= 0; at = h.indexOf(n, at + n.length)) count++;
+	return count;
+}
+
+/** The error review's submission, checked against the records it was shown
+ *  (owner, 2026-11-11): every correction quotes its wrong passage verbatim
+ *  from the current name or statement, and the corrected text no longer
+ *  carries that passage as often — a "fix" of an error that is not in the
+ *  text (the review once rewrote a correct ‖x‖_𝓗 to ‖x‖_𝓢 for a misread
+ *  quantifier) is refused and retried. */
+export function checkCorrections(
+	corrections: readonly CorrectionProposal[],
+	records: ReadonlyMap<string, { name: string; statement: string }>,
+): string | null {
 	const seen = new Set<string>();
 	for (const c of corrections) {
-		if (!ids.has(c.id)) return `Unknown id ${c.id}. Correct only the propositions listed, ids verbatim.`;
+		const record = records.get(c.id);
+		if (!record) return `Unknown id ${c.id}. Correct only the propositions listed, ids verbatim.`;
 		if (seen.has(c.id)) return `Proposition ${c.id} appears twice. Give one correction per proposition.`;
 		seen.add(c.id);
 		if (!c.name?.trim() && !c.statement?.trim()) return `Correction ${c.id} changes nothing. Give the corrected name and/or statement, or leave it out.`;
+		if (!c.wrong?.trim()) return `Correction ${c.id} does not quote the wrong passage. Copy it verbatim into "wrong", or leave ${c.id} out.`;
+		const before = occurrences(record.name, c.wrong) + occurrences(record.statement, c.wrong);
+		if (before === 0)
+			return `The passage "${c.wrong}" is not in the name or statement of ${c.id}. Quote the wrong passage verbatim — if nothing there is wrong, leave ${c.id} out.`;
+		const name = c.name?.trim() ? c.name : record.name;
+		const statement = c.statement?.trim() ? c.statement : record.statement;
+		if (occurrences(name, c.wrong) + occurrences(statement, c.wrong) >= before)
+			return `Correction ${c.id} still contains the passage "${c.wrong}" it quotes as wrong. Fix that passage, or leave ${c.id} out.`;
 	}
 	return null;
 }
