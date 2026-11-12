@@ -188,7 +188,11 @@ function quizDescription(delta: { name: "quiz" | "probe"; nodeId: boolean; types
 	const example = delta.nodeId ? { type: "check" as const, nodeId: "chain-rule", ...quizExampleBody } : quizExampleBody;
 	return (
 		base +
-		"\nExample arguments — copy the escaping exactly: inside JSON strings a LaTeX backslash is \\\\ and a newline is \\n.\n```json\n" +
+		// Fork (2026-11-12): the old hint ("inside JSON strings a LaTeX backslash
+		// is \\") made Qwen double the backslash in RAW text parameters of its
+		// XML tool-call format too. The hint now names the stored value, which
+		// is the same under every tool-call format.
+		"\nExample arguments, written as JSON — the stored value of every text field has exactly ONE backslash per LaTeX command (\\frac, \\cdot); only the JSON encoding shows it doubled (\\\\frac).\n```json\n" +
 		JSON.stringify(example, null, 2) +
 		"\n```" +
 		(delta.nodeId ? " The example's nodeId is illustrative — copy an exact id from this session's plan_init." : "")

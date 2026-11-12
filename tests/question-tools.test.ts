@@ -229,7 +229,11 @@ describe("quiz tool descriptions carry the complete, phase-correct example", () 
 		// string carries literal double backslashes, exactly what the model
 		// must type inside JSON.
 		assert.ok(desc.includes("A signal is $y=\\\\sin(2x)$"), "LaTeX command backslash shows doubled");
-		assert.ok(desc.includes("a LaTeX backslash is \\\\ and a newline is \\n"), "the one-line escaping hint");
+		assert.ok(
+			desc.includes("exactly ONE backslash per LaTeX command (\\frac, \\cdot); only the JSON encoding shows it doubled (\\\\frac)"),
+			"the one-line escaping hint names the stored value, not the wire text",
+		);
+		assert.ok(!desc.includes("copy the escaping exactly"), "the old wire-text hint is gone (Qwen doubled raw text after it)");
 		assert.ok(!desc.includes("nodeId"), "probe example carries no phase metadata");
 	});
 

@@ -5,6 +5,7 @@ import { providerEventObserver } from "./provider-events.ts";
 import type { Usage } from "@earendil-works/pi-ai";
 import { PATHS } from "../../config.ts";
 import { APP_IDENTITY, piEngineFor, type PiEngine } from "./models.ts";
+import { withChatStepGuard } from "./chat-step-guard.ts";
 import { effectivePromptSegments } from "./prompt-segments.ts";
 import {
 	askUserQuestionTool,
@@ -221,7 +222,8 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 			],
 			messages: opts.messages ?? [],
 		},
-		streamFn: engine.streamFn,
+		// Fork (2026-11-12): 20k output per step + the stall watchdog (chat-step-guard.ts).
+		streamFn: withChatStepGuard(engine.streamFn),
 		...(providerEvents ? { onProviderStreamEvent: providerEvents } : {}),
 		// Narration-marked thinking is not learner-facing delivery. The
 		// paired hooks track successful output before allowing its question.

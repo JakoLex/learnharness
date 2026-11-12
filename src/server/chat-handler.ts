@@ -64,6 +64,7 @@ import {
 	type TurnInput,
 } from "../core/input-events.ts";
 import { steerDelivered } from "../core/contracts.ts";
+import { stallRetryDue } from "../agent/chat-step-guard.ts";
 import type {CallUsage} from "../core/contracts.ts";
 import type { ContextComposition } from "../core/context-composition.ts";
 
@@ -144,13 +145,30 @@ export const extraction = createExtractionPipeline({
 // delivers its steers through THIS composition root (one event: the steer
 // marker, appended natively under the turn claim), and crash recovery
 // re-spawns orphaned sub-agent loops through THIS runner.
-setTurnRunner(async (chatId, input) => {
+async function runServerTurn(chatId: string, input: TurnInput): Promise<number> {
 	const res = await handleChatInput(chatId, input);
 	// Drive the stream to completion server-side — nobody else will read it,
 	// and onFinish (persist, extraction, endTurn) only runs when it drains.
 	await res.arrayBuffer().catch(() => undefined);
 	return res.status;
-});
+}
+setTurnRunner(runServerTurn);
+
+/** THE STALL RETRY (fork, owner 2026-11-12): a step the chat-step watchdog
+ *  ended is retried ONCE, server-side, exactly like the learner's Retry
+ *  button (the wake pipeline's runner — the client follows it like a wake
+ *  turn). A second stall in a row stays for the learner. Scheduled after
+ *  the settling turn has left every registry; a busy chat (409) or a
+ *  no-longer-retryable tail (400) simply leaves the Retry button. */
+function scheduleStallRetry(chatId: string): void {
+	if (!stallRetryDue(stores.chatStore.getChat(chatId)?.messages ?? [])) return;
+	console.warn(`[chat ${chatId}] step stalled — retrying once`);
+	setTimeout(() => {
+		runServerTurn(chatId, { type: "retry" })
+			.then((status) => { if (status >= 400) console.warn(`[chat ${chatId}] stall retry not started (status ${status})`); })
+			.catch((err: unknown) => console.error(`[chat ${chatId}] stall retry crashed:`, err));
+	}, 0);
+}
 /** The settings-resolved engine for one role — BYOK (owner, 2026-09-22):
  *  the chain (role override → slot → NOTHING) may end empty, and undefined
  *  flows through to the per-need refusal gates (runner/extraction), read
@@ -698,6 +716,7 @@ export async function handleChatInput(
 							systemPromptTokens: Math.ceil(composeInstructions(freshRecord.kind === "practice" ? "practice" : "teacher").length / 4),
 						};
 					}, chatId);
+				if (!isAborted) scheduleStallRetry(chatId);
 			},
 		});
 		// The turn is now a live background object: register it so any view

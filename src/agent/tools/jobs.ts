@@ -101,7 +101,11 @@ const DEMO_ACK =
 	"The tested demo arrives as a new message when ready and is rendered in the lesson; teach with it then.";
 const VISUAL_ACK =
 	"This call is fire-and-forget: continue your turn and keep teaching — do not wait, poll, or mention waiting. " +
-	"The verified figure arrives as a new message when ready and is rendered in the lesson; reference it then.";
+	"The verified figure arrives as a new message when ready and is rendered in the lesson; reference it then. " +
+	// Fork (2026-11-12): a finished figure is delivered only once no question
+	// is open, so a question asked right after dispatch held back the very
+	// figure it depended on.
+	"If your next question needs this figure, do not ask it now — end your turn; the figure arrives as a new message and you continue from there.";
 const PDF_ACK =
 	"This call is fire-and-forget: continue your turn and keep teaching — do not wait, poll, or mention waiting. " +
 	"The document brief arrives as a new message when ready; weave it into the lesson and cite its pages.";
