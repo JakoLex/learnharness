@@ -1,9 +1,8 @@
 "use client";
 
 import { apiFetch } from "@/components/api-fetch";
-import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
-import { useBackdropDismiss } from "@/components/backdrop-dismiss";
+import { useEffect, useState, type ReactElement, type ReactNode } from "react";
+import { HostDialog } from "@/components/host-dialog";
 import type { ChatDeleteMode, ChatListItem } from "@/src/core";
 
 /** The graph-traces checkbox copy (owner, 2026-09-24 flow rework — was
@@ -53,9 +52,6 @@ export function DeleteSessionDialog({
 }) {
 	const [traces, setTraces] = useState(false);
 	const [busy, setBusy] = useState(false);
-	const backdropDismiss = useBackdropDismiss(() => {
-		if (!busy) onClose();
-	});
 	// Retry IS pressing Delete again: the mode always derives from the
 	// checkbox's current state (a toggle between failure and retry is a
 	// change of intent, honored as such — the checkbox is disabled while
@@ -70,23 +66,6 @@ export function DeleteSessionDialog({
 			setFailure(null);
 		}
 	}, [chat]);
-
-	// Esc closes (claimed — a menu/dialog Esc must not also abort a turn).
-	useEffect(() => {
-		if (!chat) return;
-		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.key === "Escape") {
-				// THE ONE-ESC LAW (keyboard round 2026-10-06): claim at the
-				// document level — a window-level stopPropagation cannot stop
-				// the earlier-registered global window listener.
-				e.preventDefault();
-				e.stopPropagation();
-				onClose();
-			}
-		};
-		document.addEventListener("keydown", onKeyDown);
-		return () => document.removeEventListener("keydown", onKeyDown);
-	}, [chat, onClose]);
 
 	const run = async () => {
 		if (!chat || busy) return;
@@ -117,12 +96,7 @@ export function DeleteSessionDialog({
 
 	if (!chat) return null;
 
-	return createPortal(
-		<div
-			className="fixed inset-0 z-50 flex items-center justify-center bg-background/80"
-			{...backdropDismiss}
-		>
-			<DeleteSessionBody
+	return <DeleteSessionBody
 				chat={chat}
 				traces={traces}
 				busy={busy}
@@ -130,10 +104,11 @@ export function DeleteSessionDialog({
 				onTraces={(next) => setTraces(next)}
 				onClose={onClose}
 				onRun={() => void run()}
-			/>
-		</div>,
-		document.body,
-	);
+				renderFrame={(frame) => <HostDialog open frame={frame} onClose={() => {
+					if (busy) return "blocked";
+					onClose(); return "closed";
+				}} backdropProps={{ className: "fixed inset-0 z-50 flex items-center justify-center bg-background/80" }}>{frame.props.children}</HostDialog>}
+			/>;
 }
 
 /** The dialog's pure body — exported for SSR pins (the settings-dialog /
@@ -146,6 +121,7 @@ export function DeleteSessionBody({
 	onTraces,
 	onClose,
 	onRun,
+	renderFrame,
 }: {
 	chat: Pick<ChatListItem, "id" | "title">;
 	/** The graph-traces checkbox — unchecked by default (preserve-graph). */
@@ -155,8 +131,9 @@ export function DeleteSessionBody({
 	onTraces: (next: boolean) => void;
 	onClose: () => void;
 	onRun: () => void;
+	renderFrame?: (frame: ReactElement<{ children: ReactNode }>) => ReactNode;
 }) {
-	return (
+	const frame = (
 		<div
 			role="dialog"
 			aria-modal="true"
@@ -240,4 +217,5 @@ export function DeleteSessionBody({
 			</div>
 		</div>
 	);
+	return renderFrame ? renderFrame(frame) : frame;
 }

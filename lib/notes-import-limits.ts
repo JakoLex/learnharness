@@ -5,11 +5,19 @@ export const MAX_IMPORT_BYTES = 100 * 1024 * 1024;
 export const MAX_IMPORT_BODY_BYTES = 101 * 1024 * 1024;
 /** The refusal for a file or request over MAX_IMPORT_BYTES. */
 export const TOO_BIG_MESSAGE = `Too big. Max ${MAX_IMPORT_BYTES / (1024 * 1024)} MB.`;
-/** What "Import notes" takes, single files and folders alike (fork, owner
- *  2026-11-06): text notes, plus the documents the server reads through the
- *  doc loader (src/server/documents.ts DOCUMENT_EXTENSIONS). */
-export const IMPORT_FILE_EXTENSIONS: readonly string[] = [".md", ".markdown", ".txt", ".pdf", ".pptx", ".docx", ".html", ".htm", ".png", ".jpg", ".jpeg"];
+
+/** The file types "Extract files" takes, single files and folders alike;
+ *  the client check, server check and picker `accept` all derive from this
+ *  list. Upstream's text types, plus the documents the server reads through
+ *  the doc loader (fork, owner 2026-11-06 — src/server/documents.ts
+ *  DOCUMENT_EXTENSIONS). */
+export const IMPORT_FILE_EXTENSIONS: readonly string[] = [
+	".txt", ".md", ".markdown", ".rst", ".org", ".adoc", ".tex", ".pdf",
+	".pptx", ".docx", ".html", ".htm", ".png", ".jpg", ".jpeg",
+];
 export const IMPORT_EXTENSIONS = new RegExp(`(?:${IMPORT_FILE_EXTENSIONS.map((ext) => ext.replace(".", "\\.")).join("|")})$`, "i");
+export const IMPORT_ACCEPT = IMPORT_FILE_EXTENSIONS.join(",");
+export const UNSUPPORTED_TYPE_MESSAGE = "This file type isn't supported. Use text, Markdown, PDF, Word (.docx), PowerPoint (.pptx), HTML or images.";
 
 /** Contributor's relative-path contract: identity only, never a disk path.
  * Chromium may serialize the basename or the full webkitRelativePath. */

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { after, afterEach, describe, it } from "node:test";
+import { after, afterEach, before, describe, it } from "node:test";
 
 // Accounts (accounts wave, owner-approved 2026-10-28). Setup moves the
 // data base's records, so this file owns its own data dir — set BEFORE
@@ -20,7 +20,7 @@ const { createTeacherTools, createProberTools, hostFileAccess } = await import("
 const { proxy } = await import("../proxy.ts");
 const { NextRequest } = await import("next/server");
 const { accountSectionIds } = await import("../components/settings/account-section.tsx");
-const { visibleSectionIds } = await import("../components/settings/settings-dialog.tsx");
+const { visibleSectionIds, pluginSectionsVisible } = await import("../components/settings/settings-dialog.tsx");
 import type { DataScope } from "../src/store/data-scope.ts";
 
 const ON = () => {
@@ -197,6 +197,12 @@ describe("account management", () => {
 });
 
 describe("the sign-in gate (proxy)", () => {
+	// Upstream 0.6's browser API policy (src/server/desktop-access.ts) refuses
+	// host names outside LH_ALLOWED_HOSTS before the sign-in gate runs.
+	const savedHosts = process.env.LH_ALLOWED_HOSTS;
+	before(() => { process.env.LH_ALLOWED_HOSTS = "lh.test"; });
+	after(() => { if (savedHosts === undefined) delete process.env.LH_ALLOWED_HOSTS; else process.env.LH_ALLOWED_HOSTS = savedHosts; });
+
 	it("accounts mode: no cookie → pages go to /login, APIs answer 401; /login, /setup and /api/auth stay open", () => {
 		ON();
 		const page = proxy(new NextRequest("http://lh.test/p/prj_1"));
@@ -213,6 +219,11 @@ describe("the sign-in gate (proxy)", () => {
 	it("without accounts nothing is gated", () => {
 		assert.equal(proxy(new NextRequest("http://lh.test/p/prj_1")).headers.get("x-middleware-next"), "1");
 	});
+
+	it("the API request policy answers before the sign-in gate (403, not 401)", () => {
+		ON();
+		assert.equal(proxy(new NextRequest("http://rebind.invalid/api/chats")).status, 403);
+	});
 });
 
 describe("settings sections per viewer", () => {
@@ -228,5 +239,9 @@ describe("settings sections per viewer", () => {
 		assert.ok(!visibleSectionIds(member).includes("keys"));
 		assert.ok(visibleSectionIds(member).includes("account"));
 		assert.ok(visibleSectionIds(admin).includes("accounts"));
+		// Plugin management and plugin settings pages are the admin's too.
+		assert.equal(pluginSectionsVisible(local), true);
+		assert.equal(pluginSectionsVisible(admin), true);
+		assert.equal(pluginSectionsVisible(member), false);
 	});
 });

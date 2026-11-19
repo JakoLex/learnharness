@@ -79,7 +79,7 @@ export function AccountSection({ viewer }: { viewer: Viewer }) {
 						Change password
 					</Button>
 					{status && (
-						<p role={status.ok ? "status" : "alert"} className={status.ok ? "text-xs text-muted-foreground" : "text-xs text-red-400"}>
+						<p role={status.ok ? "status" : "alert"} className={status.ok ? "text-xs text-muted-foreground" : "text-xs text-error"}>
 							{status.text}
 						</p>
 					)}
@@ -203,7 +203,7 @@ export function AccountsSection({ viewer }: { viewer: Viewer }) {
 					</Button>
 				</form>
 				{status && (
-					<p role={status.ok ? "status" : "alert"} className={status.ok ? "text-xs text-muted-foreground" : "text-xs text-red-400"}>
+					<p role={status.ok ? "status" : "alert"} className={status.ok ? "text-xs text-muted-foreground" : "text-xs text-error"}>
 						{status.text}
 					</p>
 				)}

@@ -2,14 +2,19 @@
  * POST /api/graph/import — the format-agnostic front door's transport
  * (vision §1, 2026-09-13): raw personal-notes files in, one extraction run
  * per file through the SAME pipeline the sessions use. Multipart form data
- * (field "files", any text format — the extractor is format-agnostic); the
- * pipeline mints a deterministic source id per file path, persists the
- * source record (the file's provenance + the run's usage), and runs
- * extractor → auditor → merger over the raw text. Documents (PDF, slides,
- * Word, HTML, images — fork, 2026-10-29) are read by the doc loader first
+ * (field "files"); the pipeline mints a deterministic source id per file
+ * path, persists the source record (the file's provenance + the run's usage),
+ * and runs extractor → auditor → merger over the raw text.
+ *
+ * Only filename extensions listed in lib/notes-import-limits.ts are taken.
+ * Among those, documents (a PDF spotted by its %PDF- header; slides, Word,
+ * HTML, images by name — fork, 2026-10-29) are read by the doc loader first
  * (src/server/documents.ts); a PDF without it is converted to Markdown by
  * pdf.js (upstream's converter), and one with nothing to extract fails
- * before any model call.
+ * before any model call. Other files are decoded as UTF-8 unless a zero
+ * byte in their first 8 KiB causes refusal. This is a binary-file
+ * heuristic, not complete text or encoding validation. The type and
+ * plain-text refusals occur before any source record or model call.
  *
  * Small concurrency cap: the model calls are the slow part, and a burst of
  * 25 simultaneous runs would trip provider rate limits — a 3-wide worker
@@ -18,7 +23,8 @@
  * /api/graph/status, as with session runs.
  */
 import { documentKind, extraction, NotesImportError, readDocument, scoped, sourceDirectory } from "@/src/server";
-import { MAX_IMPORT_BODY_BYTES, MAX_IMPORT_BYTES, TOO_BIG_MESSAGE, validNotesPath } from "@/lib/notes-import-limits.ts";
+import { IMPORT_EXTENSIONS, MAX_IMPORT_BODY_BYTES, MAX_IMPORT_BYTES, TOO_BIG_MESSAGE, UNSUPPORTED_TYPE_MESSAGE, validNotesPath } from "@/lib/notes-import-limits.ts";
+import { FormBodyLimitError, readBoundedFormData } from "@/lib/bounded-form-data.ts";
 import {
 	emit,
 	ModelsNotConfiguredError,
@@ -48,48 +54,12 @@ interface ImportResult {
 	slots?: string[];
 }
 
-class ImportBodyLimitError extends Error {}
-
-/** Bound actual body bytes before multipart parsing, including requests without
- * a trustworthy Content-Length. Next's proxy may truncate first; parsing that
- * incomplete body is a separate, handled refusal, never a partial import. */
-async function readImportForm(request: Request): Promise<FormData> {
-	if (Number(request.headers.get("content-length")) > MAX_IMPORT_BODY_BYTES) {
-		void request.body?.cancel().catch(() => undefined);
-		throw new ImportBodyLimitError();
-	}
-	const reader = request.body?.getReader();
-	if (!reader) throw new SyntaxError("Missing import body");
-	const chunks: Uint8Array[] = [];
-	let bytes = 0;
-	try {
-		for (;;) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			bytes += value.byteLength;
-			if (bytes > MAX_IMPORT_BODY_BYTES) throw new ImportBodyLimitError();
-			chunks.push(value);
-		}
-		const body = new Uint8Array(bytes);
-		let offset = 0;
-		for (const chunk of chunks) {
-			body.set(chunk, offset);
-			offset += chunk.byteLength;
-		}
-		return await new Response(body, { headers: { "Content-Type": request.headers.get("content-type") ?? "" } }).formData();
-	} finally {
-		// Do not wait for a tee's other consumer to finish before refusing an upload.
-		void reader.cancel().catch(() => undefined);
-		reader.releaseLock();
-	}
-}
-
 async function POSTHandler(request: Request) {
 	let form: FormData;
 	try {
-		form = await readImportForm(request);
+		form = await readBoundedFormData(request, MAX_IMPORT_BODY_BYTES);
 	} catch (err) {
-		const oversized = err instanceof ImportBodyLimitError;
+		const oversized = err instanceof FormBodyLimitError;
 		return Response.json({ results: [] as ImportResult[], error: oversized
 			? "Import request is too large. Select fewer files."
 			: "Could not read the upload. It may be incomplete; please select the files again." }, { status: oversized ? 413 : 400 });
@@ -121,9 +91,14 @@ async function POSTHandler(request: Request) {
 			const { file, requestIndex, filePath } = next;
 			let notice: string | undefined;
 			try {
+				// Off-list names are refused before registerImport or any model call.
+				if (!IMPORT_EXTENSIONS.test(file.name)) {
+					results.push({ filePath, requestIndex, outcome: "failed", ok: false, error: UNSUPPORTED_TYPE_MESSAGE });
+					continue;
+				}
 				// Documents (PDF by its bytes; slides, Word, images by name) are
 				// read by the doc loader inside the import, as its "reading"
-				// phase; text files as before.
+				// phase; text files as before, unless they hold a zero byte.
 				// The folder placement is registered once the file has been read.
 				let input: Parameters<typeof extraction.importNotes>[0];
 				const bytes = new Uint8Array(await file.arrayBuffer());
@@ -139,6 +114,10 @@ async function POSTHandler(request: Request) {
 						},
 					};
 				} else {
+					if (bytes.subarray(0, 8192).includes(0)) {
+						results.push({ filePath, requestIndex, outcome: "failed", ok: false, error: "This file isn't plain text." });
+						continue;
+					}
 					sourceDirectory.registerImport(filePath);
 					input = { filePath, text: new TextDecoder().decode(bytes) };
 				}

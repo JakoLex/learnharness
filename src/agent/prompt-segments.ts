@@ -41,7 +41,7 @@ const PROMPTS_DIR = path.join(PATHS.root, "src", "agent", "prompts");
  *  every agent. The question/confidence/file mechanics stay out
  *  (practice has no such tools). Fork (owner, 2026-10-30): the map and
  *  material readers ARE practice's tools too — 35-his-material.md joins. */
-const PRACTICE_SHARED_FRAGMENTS = ["10-voice.md", "15-accuracy.md", "16-mental-model.md", "35-his-material.md", "40-formatting.md"];
+const PRACTICE_SHARED_FRAGMENTS = ["10-voice.md", "15-accuracy.md", "16-mental-model.md", "35-his-material.md", "35-side-conversations.md", "40-formatting.md"];
 
 /** Absolute path for an override file (unchecked — validate first). */
 function overrideFileFor(segmentPath: string): string {

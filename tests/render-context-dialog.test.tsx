@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
 import { ContextDialogBody, contextView, lastActivity, messageCounts } from "../components/context-dialog.tsx";
 import { StatsBar } from "../components/stats-bar.tsx";
+import { InteractionLayersProvider } from "../components/interaction-layers.tsx";
 import type { CallUsage, LhMessage, TurnUsage } from "../src/core/index.ts";
 
 // The context panel (2026-10-28): the measured headline, the estimated
@@ -110,7 +111,7 @@ describe("context panel", () => {
 	});
 
 	it("the stats bar summary opens a dialog (closed on first render)", () => {
-		const html = renderToStaticMarkup(<StatsBar chatId="fixture" turns={[turn()]} contextTokens={11_000} />);
+		const html = renderToStaticMarkup(<InteractionLayersProvider><StatsBar chatId="fixture" turns={[turn()]} contextTokens={11_000} /></InteractionLayersProvider>);
 		assert.match(html, /<button[^>]*aria-haspopup="dialog"[^>]*data-testid="stats-summary"/);
 		assert.ok(!html.includes('data-testid="context-dialog"'));
 	});

@@ -338,9 +338,10 @@ function purgeLegacyLedgers(): void {
 	if (purgedGraphDirs.has(graphDir)) return;
 	purgedGraphDirs.add(graphDir);
 	for (const legacy of ["edges.jsonl", "events.jsonl"]) {
-		const file = path.join(graphDir, legacy);
+		// Runtime user records are not assets for instrumentation's build trace.
+		const file = path.join(/* turbopackIgnore: true */ graphDir, legacy);
 		try {
-			if (fs.existsSync(file)) {
+			if (fs.existsSync(/* turbopackIgnore: true */ file)) {
 				fs.rmSync(file);
 				console.info(`[graph-store] purged legacy ledger: ${file}`);
 			}

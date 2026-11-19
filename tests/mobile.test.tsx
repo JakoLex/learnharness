@@ -14,6 +14,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createLongPress, LONG_PRESS_MS, LONG_PRESS_SLOP } from "../components/long-press.ts";
 import { SessionRow, sidebarShown } from "../components/sidebar.tsx";
 import { GraphChromeRow } from "../components/graph-view.tsx";
+import { InteractionLayersProvider } from "../components/interaction-layers.tsx";
 import { labelInView, samePhysicsTuning, worldView, type GraphRenderSettings } from "../components/graph-canvas.ts";
 import { DEFAULT_PHYSICS_TUNING } from "../src/core/index.ts";
 
@@ -124,14 +125,16 @@ describe("GraphChromeRow — icon-only below md", () => {
 		changeSettings: () => {},
 		onOpenChains: () => {},
 	};
+	// The import control registers with the interaction layers (upstream 0.6), as in the app shell.
+	const row = (props: typeof PROPS) => renderToStaticMarkup(createElement(InteractionLayersProvider, null, createElement(GraphChromeRow, props)));
 	it("the labels stay for screen readers, hidden on a phone", () => {
-		const html = renderToStaticMarkup(createElement(GraphChromeRow, PROPS));
+		const html = row(PROPS);
 		assert.ok(html.includes('<span class="max-md:sr-only">Chains</span>'));
 		assert.ok(html.includes('<span class="max-md:sr-only">Extract files…</span>'));
 	});
 	it("the search is magnifier-sized until it holds a query", () => {
-		assert.ok(renderToStaticMarkup(createElement(GraphChromeRow, PROPS)).includes("max-md:w-9"));
-		assert.ok(!renderToStaticMarkup(createElement(GraphChromeRow, { ...PROPS, query: "x" })).includes("max-md:w-9"));
+		assert.ok(row(PROPS).includes("max-md:w-9"));
+		assert.ok(!row({ ...PROPS, query: "x" }).includes("max-md:w-9"));
 	});
 });
 

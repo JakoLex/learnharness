@@ -27,14 +27,20 @@ describe("the reading-thinking field (owner round, 2026-10-07)", () => {
 
 describe("the ask-the-tutor field (owner, 2026-10-28)", () => {
 	it("reads as the tutor channel; the send arrow is live only with text and asking possible", () => {
-		const empty = renderToStaticMarkup(<ReadingThinkingField value="" revision={0} onChange={() => {}} onAsk={() => {}} claim={false} />);
+		const empty = renderToStaticMarkup(<ReadingThinkingField value="" revision={0} onChange={() => {}} onAsk={() => {}} askable claim={false} />);
 		assert.match(empty, />Ask the tutor</);
 		assert.match(empty, /placeholder="Ask anything before the check…"/);
 		assert.match(empty, /<button[^>]*data-testid="ask-tutor-send"[^>]*disabled=""/);
-		const text = renderToStaticMarkup(<ReadingThinkingField value="Why?" revision={0} onChange={() => {}} onAsk={() => {}} claim={false} />);
+		const text = renderToStaticMarkup(<ReadingThinkingField value="Why?" revision={0} onChange={() => {}} onAsk={() => {}} askable claim={false} />);
 		assert.doesNotMatch(text, /<button[^>]*data-testid="ask-tutor-send"[^>]*disabled=""/);
-		const unavailable = renderToStaticMarkup(<ReadingThinkingField value="Why?" revision={0} onChange={() => {}} claim={false} />);
+		const unavailable = renderToStaticMarkup(<ReadingThinkingField value="Why?" revision={0} onChange={() => {}} askable claim={false} />);
 		assert.match(unavailable, /<button[^>]*data-testid="ask-tutor-send"[^>]*disabled=""/, "busy/compacting/sibling: no asking");
+	});
+
+	it("plugin questions get the plain reading field — no asking (owner, 2026-11-19)", () => {
+		const plain = renderToStaticMarkup(<ReadingThinkingField value="Why?" revision={0} onChange={() => {}} onAsk={() => {}} claim={false} />);
+		assert.match(plain, />Thinking while reading</);
+		assert.doesNotMatch(plain, /Ask the tutor|ask-tutor-send/);
 	});
 
 	const dom = parseHTML("<html><body></body></html>");
@@ -66,6 +72,7 @@ describe("the ask-the-tutor field (owner, 2026-10-28)", () => {
 				onChange={() => {}}
 				onAsk={props.ask ? () => calls.ask++ : undefined}
 				onOpen={props.open ? () => calls.open++ : undefined}
+				askable
 				claim={false}
 			/>,
 		));

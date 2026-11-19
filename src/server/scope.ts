@@ -141,6 +141,29 @@ export function scoped<A extends unknown[]>(
 	};
 }
 
+/** Run the ROOT LAYOUT's user-level reads (the first-paint theme, upstream
+ *  0.6 merge) as the local/signed-in user. The root layout also renders
+ *  /login and /setup, so a signed-out request never redirects here — it
+ *  runs `signedOut` instead (no user, no record to read). */
+export async function withUserScope<T>(fn: () => T | Promise<T>, signedOut: () => T | Promise<T>): Promise<T> {
+	const user = await requestUser(undefined);
+	if (user instanceof Response) return signedOut();
+	ensureUserLayout(user.userRoot);
+	return runInDataScope(scopeFor(user), fn);
+}
+
+/** Run `fn` synchronously as the local user, for routes that only exist
+ *  WITHOUT accounts (the custom endpoint, fork-features.ts) — the local
+ *  user is the admin. Fails closed with accounts on; tests keep the flat
+ *  layout like scoped() does. */
+export function inLocalUserScope<T>(fn: () => T): T {
+	if (accountsEnabled()) throw new Error("inLocalUserScope: accounts are on");
+	if (flatLayout()) return fn();
+	const user = localUser();
+	ensureUserLayout(user.userRoot);
+	return runInDataScope(scopeFor(user), fn);
+}
+
 /** Run a server page's data reads as the local/signed-in user, in
  *  `projectId` when given. Returns null when the project does not exist
  *  (the page answers notFound()). */

@@ -12,6 +12,7 @@ import { Loader2Icon, SparklesIcon } from "lucide-react";
 import type { ReviewEntry, ReviewProtocol } from "@/src/core";
 import { apiFetch } from "@/components/api-fetch";
 import { usePopoverDismiss } from "@/components/popover-dismiss";
+import { INTERACTION_LAYER_Z_BASE } from "@/components/host-dialog";
 import { Hint } from "@/components/ui/hint";
 
 const PHASE_LABEL: Record<NonNullable<ReviewProtocol["phase"]>, string> = {
@@ -42,11 +43,13 @@ export function GraphReviewControl({
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const rootRef = useRef<HTMLDivElement>(null);
-	usePopoverDismiss(rootRef, open, () => setOpen(false));
+	// The panel is its own interaction layer (upstream 0.6 popovers): Escape
+	// and outside clicks close it, and it stacks above the layers under it.
+	const panelRef = useRef<HTMLDivElement>(null);
+	const popupLayer = usePopoverDismiss(rootRef, open, () => setOpen(false), { layerRootRef: panelRef });
 	// Keep the panel on screen: it hangs under the button, which sits at a
 	// different place on a phone than on a tablet. (A fixed panel would not
 	// help — the backdrop-blurred bar is its containing block.)
-	const panelRef = useRef<HTMLDivElement>(null);
 	const [shift, setShift] = useState(0);
 	useLayoutEffect(() => {
 		const panel = panelRef.current;
@@ -116,8 +119,8 @@ export function GraphReviewControl({
 			{open && (
 				<div
 					ref={panelRef}
-					style={{ transform: `translateX(${shift}px)` }}
-					className="absolute right-0 top-full z-20 mt-2 flex max-h-[70vh] w-96 max-w-[calc(100vw-1.5rem)] flex-col rounded-xl border bg-card/95 text-xs shadow-lg backdrop-blur"
+					style={{ transform: `translateX(${shift}px)`, zIndex: INTERACTION_LAYER_Z_BASE + popupLayer.order }}
+					className="absolute right-0 top-full mt-2 flex max-h-[70vh] w-96 max-w-[calc(100vw-1.5rem)] flex-col rounded-xl border bg-card/95 text-xs shadow-lg backdrop-blur"
 				>
 					<div className={`flex flex-col gap-2 p-3 ${protocol && protocol.entries.length > 0 ? "border-b" : ""}`}>
 						<span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Graph review</span>

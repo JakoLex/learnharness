@@ -8,6 +8,9 @@ import { prettyModel } from "@/components/usage-format";
 import { ModelMenuList, ThinkingMenuList } from "@/components/settings/model-menu";
 import { composeSlotModel } from "@/components/settings/agent-section";
 import { MenuShell } from "@/components/menu-shell";
+import { useInteractionLayers } from "@/components/interaction-layers";
+import { isInputShortcutScopeEligible } from "@/components/plugin-input-focus";
+import { ModelPickerPill } from "@/components/model-picker-pill";
 import { Hint } from "@/components/ui/hint";
 import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
 import { useModelCatalog } from "@/components/model-catalog";
@@ -47,6 +50,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	const [open, setOpen] = useState<"model" | "thinking" | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
+	const interactions = useInteractionLayers();
 
 	// The record read — BOTH mount and the cross-surface signal land
 	// here (fix wave: another surface's models write re-reads into the
@@ -122,27 +126,19 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	useEffect(() => {
 		if (open === null) return;
 		const onPointerDown = (e: PointerEvent) => {
+			const popup = interactions.getTopLayer();
+			if (popup?.kind !== "popup" || !containerRef.current?.contains(popup.anchorRef?.current ?? null) || !interactions.isElementEligible(popup.rootRef.current)) return;
 			const t = e.target as Element;
 			if (t instanceof Element && t.closest("[data-lh-menu]")) return;
 			if (containerRef.current && !containerRef.current.contains(t)) {
 				setOpen(null);
 			}
 		};
-		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.key === "Escape") {
-				// Claim the Esc (keyboard wave A): the window-level chain must
-				// not ALSO stop dictation / abort the turn under this menu.
-				e.stopPropagation();
-				setOpen(null);
-			}
-		};
 		document.addEventListener("pointerdown", onPointerDown);
-		document.addEventListener("keydown", onKeyDown);
 		return () => {
 			document.removeEventListener("pointerdown", onPointerDown);
-			document.removeEventListener("keydown", onKeyDown);
 		};
-	}, [open]);
+	}, [open, interactions]);
 
 	// One write seam: composeSlotModel preserves the cheap/vision siblings
 	// (replace-whole-section discipline) and the per-field independence of
@@ -228,16 +224,18 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// tab-focus. Both work from any focus, including mid-typing.
 	useEffect(() => {
 		const onOpenPicker = () => {
+			if (!isInputShortcutScopeEligible(containerRef.current, interactions)) return;
 			setOpen("model");
 			setError(null);
 			refresh(); // mid-session key changes widen the menu (cache fix)
 		};
 		window.addEventListener("lh:kbd-open-model-picker", onOpenPicker);
 		return () => window.removeEventListener("lh:kbd-open-model-picker", onOpenPicker);
-	}, [refresh]);
+	}, [refresh, interactions]);
 
 	useEffect(() => {
 		const onCycleThinking = () => {
+			if (!isInputShortcutScopeEligible(containerRef.current, interactions)) return;
 			if (levels.length === 0) return;
 			const idx = effectiveLevel === undefined ? -1 : levels.indexOf(effectiveLevel);
 			const next = levels[(idx + 1) % levels.length];
@@ -246,7 +244,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 		};
 		window.addEventListener("lh:kbd-cycle-thinking", onCycleThinking);
 		return () => window.removeEventListener("lh:kbd-cycle-thinking", onCycleThinking);
-	}, [levels, effectiveLevel, effectiveProvider, effectiveId, apply]);
+	}, [levels, effectiveLevel, effectiveProvider, effectiveId, apply, interactions]);
 
 	// Selecting a model (click and Enter share one path): keep the
 	// thinking level only when the new model supports it — otherwise
@@ -280,21 +278,15 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 				action="open-model-picker"
 				side="bottom"
 			>
-				<button
-				type="button"
-				data-testid="stats-model"
-				onClick={() => openMenu("model")}
-				aria-expanded={open === "model"}
-				// Chrome look (owner, fix wave round 3): matches the graph
-				// view's floating top-right buttons (import notes, gear,
-				// coverage) — blurred, fuller opacity, shadowed — so the
-				// graph no longer bleeds through these pills. Phone (fork, owner
-				// 2026-10-30): the name stays on one line and ends in "…".
-				className="flex items-center gap-1.5 rounded-full border bg-card/85 px-2.5 py-1 shadow-lg backdrop-blur transition-colors hover:border-border hover:bg-muted max-md:min-w-0"
-			>
-				<span className="text-card-foreground max-md:truncate">{effectiveId ? prettyModel(effectiveId) : "—"}</span>
-				<span aria-hidden className="text-xs text-muted-foreground">▾</span>
-			</button>
+				<ModelPickerPill
+					data-testid="stats-model"
+					onClick={() => openMenu("model")}
+					aria-expanded={open === "model"}
+					// Phone (fork, owner 2026-10-30): the name stays on one line
+					// and ends in "…".
+					className="max-md:min-w-0"
+					labelClassName="max-md:truncate"
+				>{effectiveId ? prettyModel(effectiveId) : "—"}</ModelPickerPill>
 			</Hint>
 			<Hint
 				// "Thinking" + its real shortcut via the registry (owner interlude
@@ -304,29 +296,15 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 				action="cycle-thinking"
 				side="bottom"
 			>
-				<button
-				type="button"
-				data-testid="stats-thinking"
-				onClick={() => {
-					// No model picked → nothing to set a level FOR: the click
-					// is a no-op, never an empty menu.
-					if (entry === undefined) return;
-					openMenu("thinking");
-				}}
-				aria-expanded={open === "thinking"}
-				// Chrome look (owner, fix wave round 3): matches the graph
-				// view's floating top-right buttons (import notes, gear,
-				// coverage) — blurred, fuller opacity, shadowed — so the
-				// graph no longer bleeds through these pills.
-				className="flex items-center gap-1.5 rounded-full border bg-card/85 px-2.5 py-1 shadow-lg backdrop-blur transition-colors hover:border-border hover:bg-muted max-md:shrink-0"
-			>
-				{/* Just the level — the button reads like the model button reads
-				   the model name (owner, stats-control round 1). */}
-				<span className="text-card-foreground">
-					{effectiveLevel === undefined ? "—" : (THINKING_LABEL[effectiveLevel] ?? effectiveLevel)}
-				</span>
-				<span aria-hidden className="text-xs text-muted-foreground">▾</span>
-			</button>
+				<ModelPickerPill
+					data-testid="stats-thinking"
+					onClick={() => {
+						if (entry === undefined) return;
+						openMenu("thinking");
+					}}
+					aria-expanded={open === "thinking"}
+					className="max-md:shrink-0"
+				>{effectiveLevel === undefined ? "—" : (THINKING_LABEL[effectiveLevel] ?? effectiveLevel)}</ModelPickerPill>
 			</Hint>
 
 			{/* The shared dropdown body (extracted 2026-09-20): the agent
@@ -335,7 +313,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 			{open === "model" && (
 				<MenuShell
 					anchorRef={containerRef}
-					testid="model-menu"
+					testid="model-menu" onClose={() => { setOpen(null); return "closed"; }}
 					preferredSide="up"
 					menuClass="flex w-[22rem] flex-col rounded-xl border bg-card p-2 text-xs shadow-xl"
 				>
@@ -359,7 +337,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 			{open === "thinking" && (
 				<MenuShell
 					anchorRef={containerRef}
-					testid="thinking-menu"
+					testid="thinking-menu" onClose={() => { setOpen(null); return "closed"; }}
 					preferredSide="up"
 					menuClass="flex w-44 flex-col gap-0.5 rounded-xl border bg-card p-2 text-xs shadow-xl"
 				>

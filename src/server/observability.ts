@@ -25,6 +25,7 @@ import { graphRevision } from "./graph.ts";
 import { catalogContextLimits } from "./model-catalog.ts";
 import { listJobs } from "./jobs.ts";
 import { jobCost } from "./pricing.ts";
+import { pluginWorkerActivities, type PluginWorkerActivity } from "./plugin-worker-activity.ts";
 import type { JobRecord } from "../core/contracts.ts";
 import type { ModelOutage } from "../core/model-fallback.ts";
 import { modelOutages } from "../agent/model-fallback.ts";
@@ -41,6 +42,12 @@ export { chatStore } from "../store/chats.ts";
 export interface ActivityJob extends JobRecord {
 	costUsd: number | null;
 	title: string;
+	contextLimit: number | null;
+}
+
+/** Standalone plugin task; deliberately has no session identity or result payload. */
+export interface ActivityPluginWorker extends PluginWorkerActivity {
+	costUsd: number | null;
 	contextLimit: number | null;
 }
 
@@ -70,6 +77,7 @@ export interface ActivityExtraction {
  *  returns the same stamp. */
 export function activityFeed(): {
 	jobs: ActivityJob[];
+	pluginWorkers: ActivityPluginWorker[];
 	extractions: ActivityExtraction[];
 	/** Primaries currently marked down — calls go to their fallback
 	 *  (fallback wave, owner 2026-10-28). */
@@ -104,10 +112,21 @@ export function activityFeed(): {
 		phase: run.phase,
 		startedAt: run.startedAt,
 	}));
+	// A native createBackgroundTool job already owns its worker row and durable END.
+	// Acceptance and job linkage are synchronous, so the queued→running bridge
+	// cannot briefly expose both representations.
+	const linked = new Set(jobs.flatMap(job => job.kind === "plugin" && job.plugin?.taskId
+		? [`${job.plugin.pluginId}:${job.plugin.taskId}`] : []));
+	const pluginWorkers: ActivityPluginWorker[] = pluginWorkerActivities()
+		.filter(task => !linked.has(task.id))
+		.map(task => ({ ...task, costUsd: jobCost(task),
+			contextLimit: task.usage ? (limits.get(task.usage.model) ?? null) : null }))
+		.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 	// oldest-first on last activity: the stable blob order (ISO strings sort chronologically)
 	jobs.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
 	return {
 		jobs,
+		pluginWorkers,
 		extractions: extractions.sort((a, b) => a.startedAt - b.startedAt),
 		outages: modelOutages(),
 		graphRevision: graphRevision(),

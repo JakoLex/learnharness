@@ -15,7 +15,8 @@
  * NODE_ENV=test, where upstream's own tests keep exercising the code.
  * The custom endpoint never runs with accounts on (LH_ACCOUNTS=1, see
  * accountsEnabled in scope.ts): without accounts there is one local user,
- * which is the setup upstream built it for — so its routes need no scope.
+ * which is the setup upstream built it for — its route runs in that user's
+ * scope (inLocalUserScope in scope.ts), and that user is the admin.
  */
 function on(name: string): boolean {
 	const value = process.env[name];

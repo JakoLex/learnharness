@@ -83,6 +83,7 @@ export interface EffectiveSettings {
 	general: Required<GeneralSettings>;
 	dictation: Required<DictationSettings>;
 	agent: {
+		workerRequestConcurrency: number;
 		models: Record<BackgroundModelRole, EffectiveModelSpec | undefined>;
 		/** Delta map as stored — consumers resolve absent key → enabled. */
 		tools: Record<string, boolean>;
@@ -150,6 +151,26 @@ function distinctFallback(
 ): EffectiveModelSpec | undefined {
 	if (!fallback) return undefined;
 	return fallback.provider === primary.provider && fallback.id === primary.id ? undefined : fallback;
+}
+
+/** Side questions (#16): the chat's own conversation chain, under the
+ *  optional agent.models.sideQuestion override (field by field). Fork
+ *  (fallback wave): the strong slot's fallback backs up whatever model the
+ *  side question resolved to — an override included — as for the
+ *  conversation itself. */
+export function resolveSideQuestionSpec(chat: ChatSettings | undefined, record: UserSettings | null): EffectiveModelSpec | null {
+	const strong = resolveSlot(record?.models?.strong);
+	const conversation = resolveConversationSpec(chat, strong);
+	const override = record?.agent?.models?.sideQuestion;
+	const model = override?.model ?? (conversation ? { provider: conversation.provider, id: conversation.id } : undefined);
+	if (!model) return null;
+	const fallback = distinctFallback(strong?.fallback, model);
+	return {
+		provider: model.provider,
+		id: model.id,
+		thinkingLevel: override?.thinkingLevel ?? conversation?.thinkingLevel,
+		...(fallback ? { fallback } : {}),
+	};
 }
 
 /** Full-chain resolution for ANY role (BYOK, owner 2026-09-22):
@@ -230,6 +251,7 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 			language: record?.dictation?.language ?? FACTORY_SETTINGS.dictation.language,
 		},
 		agent: {
+			workerRequestConcurrency: agent.workerRequestConcurrency ?? FACTORY_SETTINGS.agent.workerRequestConcurrency,
 			models,
 			tools: agent.tools ?? {},
 			prompts: agent.prompts ?? {},
@@ -242,10 +264,12 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 			vision: resolveSlot(modelsSection.vision),
 		},
 		appearance: {
-			mode: appearance.mode ?? factoryAppearance.mode,
+			theme: appearance.theme ?? factoryAppearance.theme,
 			background: appearance.background ?? factoryAppearance.background,
+			colors: appearance.colors ?? factoryAppearance.colors,
 			fontFamily: appearance.fontFamily ?? factoryAppearance.fontFamily,
 			proseFontSize: appearance.proseFontSize ?? factoryAppearance.proseFontSize,
+			codeLigatures: appearance.codeLigatures ?? factoryAppearance.codeLigatures,
 			sessionNameSerif: appearance.sessionNameSerif ?? factoryAppearance.sessionNameSerif,
 			mdRendering: {
 				headingWeight: md.headingWeight ?? factoryMd.headingWeight,
@@ -268,6 +292,7 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 		},
 		compaction: {
 			thresholdTokens: record?.compaction?.thresholdTokens ?? FACTORY_SETTINGS.compaction.thresholdTokens,
+			includeReasoning: record?.compaction?.includeReasoning ?? FACTORY_SETTINGS.compaction.includeReasoning,
 		},
 		customProvider: {
 			baseUrl: record?.customProvider?.baseUrl ?? "",

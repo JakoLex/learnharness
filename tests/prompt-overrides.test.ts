@@ -187,6 +187,7 @@ describe("the source-derived segment list", () => {
 				"shared/30-learner-files.md",
 				// Fork (owner, 2026-10-30): the map + material readers.
 				"shared/35-his-material.md",
+				"shared/35-side-conversations.md",
 				"shared/40-formatting.md",
 			],
 		);
@@ -424,6 +425,7 @@ describe("Practice settings API and effective prompt loading", () => {
 			"practice/00-base.md", "practice/10-doctrine.md",
 			"shared/10-voice.md", "shared/15-accuracy.md", "shared/16-mental-model.md",
 			"shared/35-his-material.md", // fork: the learner's own material (read_source)
+			"shared/35-side-conversations.md",
 			"shared/40-formatting.md",
 		]);
 		assert.ok(!view.practice.some((s: { path: string }) => s.path === "system-prompt.md"));

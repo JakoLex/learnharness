@@ -69,7 +69,7 @@ export function AuthForm({ mode }: { mode: "login" | "setup" }) {
 					<Input type="password" autoComplete="new-password" placeholder="Repeat password" aria-label="Repeat password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
 				)}
 				{(error || mismatch) && (
-					<p role="alert" className="text-sm text-red-400">
+					<p role="alert" className="text-sm text-error">
 						{mismatch ? "The passwords differ." : error}
 					</p>
 				)}
