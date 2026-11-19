@@ -167,7 +167,7 @@ export const LEGACY_PROJECT_DIRS = ["chats", "graph", "jobs", "debug"] as const;
  * created project, or null when there was nothing to move.
  */
 export function migrateLegacyLayout(userRoot: string, name: string): ProjectRecord | null {
-	const present = LEGACY_PROJECT_DIRS.filter((dir) => fs.existsSync(path.join(userRoot, dir)));
+	const present = LEGACY_PROJECT_DIRS.filter((dir) => fs.existsSync(/* turbopackIgnore: true */ path.join(/* turbopackIgnore: true */ userRoot, dir)));
 	if (present.length === 0) return null;
 	const project = createProject(userRoot, name);
 	const root = projectRootFor(userRoot, project.id);

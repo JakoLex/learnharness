@@ -50,13 +50,13 @@ const SESSION_REFRESH_MS = 24 * 60 * 60 * 1000;
 const NAME = /^[a-z0-9][a-z0-9_-]{1,31}$/;
 export const MIN_PASSWORD_LENGTH = 8;
 
-const accountsFile = () => path.join(PATHS.data, "accounts.json");
-const sessionsFile = () => path.join(PATHS.data, "sessions.json");
+const accountsFile = () => path.join(/* turbopackIgnore: true */ PATHS.data, "accounts.json");
+const sessionsFile = () => path.join(/* turbopackIgnore: true */ PATHS.data, "sessions.json");
 
 /** The account's data root (settings, prompts, projects). */
 export function accountRoot(id: string): string {
 	if (!/^usr_[a-z0-9-]+$/.test(id)) throw new Error(`Invalid account id: ${id}`);
-	return path.join(PATHS.data, "users", id);
+	return path.join(/* turbopackIgnore: true */ PATHS.data, "users", id);
 }
 
 function readJson<T>(file: string, fallback: T): T {

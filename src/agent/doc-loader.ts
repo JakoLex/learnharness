@@ -57,7 +57,7 @@ export function docLoaderConfigured(): boolean {
 }
 
 function cacheDir(): string {
-	return path.join(PATHS.data, "doc-cache");
+	return path.join(/* turbopackIgnore: true */ PATHS.data, "doc-cache");
 }
 
 function cachePath(digest: string): string {

@@ -78,9 +78,9 @@ export function adoptLocalData(account: Account): string[] {
 	fs.mkdirSync(root, { recursive: true });
 	const moved: string[] = [];
 	for (const entry of ["settings.json", "prompts", "projects"]) {
-		const from = path.join(PATHS.data, entry);
-		if (!fs.existsSync(from)) continue;
-		fs.renameSync(from, path.join(root, entry));
+		const from = path.join(/* turbopackIgnore: true */ PATHS.data, entry);
+		if (!fs.existsSync(/* turbopackIgnore: true */ from)) continue;
+		fs.renameSync(/* turbopackIgnore: true */ from, path.join(/* turbopackIgnore: true */ root, entry));
 		moved.push(entry);
 	}
 	if (moved.length) console.info(`[accounts] ${account.name} took over the local ${moved.join(", ")}`);
