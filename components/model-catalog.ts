@@ -2,7 +2,7 @@
 
 import { apiFetch } from "@/components/api-fetch";
 import { useCallback, useEffect, useState } from "react";
-import type { ModelCatalogResponse } from "@/src/core";
+import type { ModelCatalogRefreshResponse, ModelCatalogResponse } from "@/src/core";
 import { onSettingsSaved } from "@/components/settings-signal";
 
 // Shared stale-while-revalidate catalog. Metadata refreshes retain the last
@@ -30,6 +30,26 @@ function fetchCatalog(revalidate = false): void {
 			if (generation === catalogGeneration) { catalogError = true; publishCatalog(); }
 		})
 		.finally(() => { if (generation === catalogGeneration) catalogInflight = undefined; });
+}
+
+/** Explicit settings action, separate from ordinary reads/rereads. */
+export async function refreshRemoteModelCatalog() {
+	const generation = catalogGeneration;
+	const response = await apiFetch("/api/models", { method: "POST" });
+	if (!response.ok) throw new Error("Model catalog refresh failed");
+	const { outcome, catalog } = await response.json() as ModelCatalogRefreshResponse;
+	if (generation === catalogGeneration) {
+		catalogGeneration++;
+		catalogInflight = undefined;
+		catalogCache = catalog;
+		catalogError = false;
+		publishCatalog();
+	} else {
+		// A settings/connection change superseded this response. Re-read the
+		// local catalog instead of reviving a stale selection or connection.
+		fetchCatalog(true);
+	}
+	return outcome;
 }
 
 export function useModelCatalog(): { catalog: ModelCatalogResponse | undefined; failed: boolean; refresh: () => void } {

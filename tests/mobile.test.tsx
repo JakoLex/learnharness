@@ -13,6 +13,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createLongPress, LONG_PRESS_MS, LONG_PRESS_SLOP } from "../components/long-press.ts";
 import { SessionRow, sidebarShown } from "../components/sidebar.tsx";
+import { SidebarFolderRow } from "../components/sidebar-folders.tsx";
 import { GraphChromeRow } from "../components/graph-view.tsx";
 import { InteractionLayersProvider } from "../components/interaction-layers.tsx";
 import { labelInView, samePhysicsTuning, worldView, type GraphRenderSettings } from "../components/graph-canvas.ts";
@@ -105,6 +106,28 @@ describe("SessionRow — long-press ready", () => {
 				active={false}
 				onOpen={() => {}}
 				onLongPress={() => {}}
+			/>,
+		);
+		assert.ok(html.includes("select-none"));
+		assert.ok(html.includes("[-webkit-touch-callout:none]"));
+	});
+});
+
+describe("SidebarFolderRow — long-press ready (upstream 0.7 folders, owner 2026-11-22)", () => {
+	it("the folder row blocks text selection and the iOS callout", () => {
+		const html = renderToStaticMarkup(
+			<SidebarFolderRow
+				folder={{ id: "f1", name: "Physik", parentId: null, createdAt: "2026-11-22T00:00:00Z" } as never}
+				depth={0}
+				open={false}
+				dropActive={false}
+				renaming={false}
+				draggable={false}
+				onToggle={() => {}}
+				onContextMenu={() => {}}
+				onLongPress={() => {}}
+				onRename={async () => {}}
+				onRenameDone={() => {}}
 			/>,
 		);
 		assert.ok(html.includes("select-none"));
