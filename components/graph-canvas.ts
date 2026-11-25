@@ -980,6 +980,9 @@ export class GraphCanvasRenderer {
 	private dimmed: ReadonlySet<string> | null = null;
 	private shaftsPath: Path2D = new Path2D();
 	private headsPath: Path2D = new Path2D();
+	/** Edges touching a dimmed proposition (fork, owner 2026-11-25). */
+	private dimmedShaftsPath: Path2D | null = null;
+	private dimmedHeadsPath: Path2D | null = null;
 	// Fork (2026-10-27): bridge geometry — dashed curves, heads, hit-test
 	// polylines, and the zoomed-out bundles between cluster centroids.
 	private bridgeParts: BridgePart[] = [];
@@ -991,7 +994,7 @@ export class GraphCanvasRenderer {
 	/** World rect the bitmap covers (drawImage target coords). */
 	private regionRect: { minX: number; minY: number; w: number; h: number } | null = null;
 	/** Region labels: cluster centroid + hue, computed at splat build. */
-	private regionMeta: { id: string; label: string | null; lines: string[] | null; cx: number; cy: number; hue: number }[] = [];
+	private regionMeta: { id: string; label: string | null; lines: string[] | null; cx: number; cy: number; hue: number; dimmed?: boolean }[] = [];
 	private regionTuning: RegionTuning = DEFAULT_REGION_TUNING;
 	private physicsTuning: PhysicsTuning = DEFAULT_PHYSICS_TUNING;
 	/** Gravity center for the live sim (graph bbox centroid at setData). */
@@ -1257,8 +1260,10 @@ export class GraphCanvasRenderer {
 	}
 
 	/** Fork (owner, 2026-11-25): propositions whose sources are all
-	 *  switched off for the tutor draw dimmed — disc and label at
-	 *  DIMMED_ALPHA; still visible, pickable and hoverable. */
+	 *  switched off for the tutor draw dimmed — disc, label and their edges
+	 *  at DIMMED_ALPHA, and no cluster tint under them (zoomed out the tint
+	 *  IS the picture); a cluster label whose members are all dimmed fades
+	 *  too. Still visible, pickable and hoverable. */
 	setDimmed(dimmed: ReadonlySet<string> | null): void {
 		this.dimmed = dimmed && dimmed.size > 0 ? dimmed : null;
 		this.geoVersion++;
@@ -1814,13 +1819,19 @@ export class GraphCanvasRenderer {
 		// edge. Single-premise arguments arrive here as ordinary
 		// proposition→proposition edges and draw exactly like any arrow.
 		const arrowLen = settings.arrowLength;
-		const shafts = new Path2D();
-		const heads = new Path2D();
+		const brightShafts = new Path2D();
+		const brightHeads = new Path2D();
+		const dimShafts = new Path2D();
+		const dimHeads = new Path2D();
+		const dimmed = this.dimmed;
 		for (const e of data.edges) {
 			if (!isVisible(e.from) || !isVisible(e.to)) continue;
 			const a = this.nodeById.get(e.from);
 			const b = this.nodeById.get(e.to);
 			if (!a || !b) continue;
+			const dim = dimmed !== null && (dimmed.has(e.from) || dimmed.has(e.to));
+			const shafts = dim ? dimShafts : brightShafts;
+			const heads = dim ? dimHeads : brightHeads;
 			const intoImp = isImpNodeId(e.to);
 			const outOfImp = isImpNodeId(e.from);
 			const g = arrowGeometry(a, b, outOfImp ? 0 : nodeR, intoImp ? 0 : nodeR, arrowLen);
@@ -1838,8 +1849,10 @@ export class GraphCanvasRenderer {
 				heads.closePath();
 			}
 		}
-		this.shaftsPath = shafts;
-		this.headsPath = heads;
+		this.shaftsPath = brightShafts;
+		this.headsPath = brightHeads;
+		this.dimmedShaftsPath = dimmed ? dimShafts : null;
+		this.dimmedHeadsPath = dimmed ? dimHeads : null;
 		this.buildBridges(isVisible, nodeR, arrowLen);
 
 		// Cluster regions are NOT built here: they rasterize into their own
@@ -2091,8 +2104,10 @@ export class GraphCanvasRenderer {
 		// cluster labels follow their own `clusterLabels` setting and must
 		// survive the region paint being turned off.
 		this.regionMeta = [];
+		const dimmed = this.dimmed;
 		data.clusters.forEach((cluster) => {
 			let members = 0;
+			let dimMembers = 0;
 			let sumX = 0;
 			let sumY = 0;
 			for (const id of cluster.members) {
@@ -2100,6 +2115,7 @@ export class GraphCanvasRenderer {
 				const n = this.nodeById.get(id);
 				if (!n) continue;
 				members++;
+				if (dimmed?.has(id)) dimMembers++;
 				sumX += n.x;
 				sumY += n.y;
 			}
@@ -2111,9 +2127,12 @@ export class GraphCanvasRenderer {
 					cy: sumY / members,
 					hue: clusterHue(cluster.id),
 					lines: null,
+					dimmed: dimMembers === members,
 				});
 			}
 		});
+		// Fork (owner, 2026-11-25): switched-off propositions get no tint.
+		const tinted = (id: string) => isVisible(id) && !dimmed?.has(id);
 
 		// Wrap the region labels ONCE per geometry build, at their
 		// SCREEN-fixed size (viewer-relative labels — this px size is what
@@ -2212,7 +2231,7 @@ export class GraphCanvasRenderer {
 				// segments still stroked into the (visible-only) bitmap cut
 				// diagonal hue streaks across other clusters' regions (user-
 				// reported 2026-09-14) — rect, discs, and anchors already filter.
-				if (!isVisible(e.from) || !isVisible(e.to)) continue;
+				if (!tinted(e.from) || !tinted(e.to)) continue;
 				const a = this.nodeById.get(e.from);
 				const b = this.nodeById.get(e.to);
 				if (!a || !b) continue;
@@ -2233,7 +2252,7 @@ export class GraphCanvasRenderer {
 			rctx.fillStyle = `hsla(${hue}, 65%, ${data.colors.clusterLightness.ring}%, 1)`;
 			const discR = dilationW / cell;
 			for (const id of cluster.members) {
-				if (touched.has(id) || !isVisible(id)) continue;
+				if (touched.has(id) || !tinted(id)) continue;
 				const n = this.nodeById.get(id);
 				if (!n) continue;
 				rctx.beginPath();
@@ -2357,6 +2376,13 @@ export class GraphCanvasRenderer {
 			ctx.lineCap = "round";
 			ctx.stroke(this.shaftsPath);
 			ctx.fill(this.headsPath);
+			if (this.dimmedShaftsPath && this.dimmedHeadsPath) {
+				ctx.save();
+				ctx.globalAlpha = DIMMED_ALPHA;
+				ctx.stroke(this.dimmedShaftsPath);
+				ctx.fill(this.dimmedHeadsPath);
+				ctx.restore();
+			}
 		}
 
 		// 3b. Fork (2026-10-27): cross-source bridges. Zoomed out, one soft
@@ -2522,6 +2548,7 @@ export class GraphCanvasRenderer {
 			const lineH = (settings.clusterLabelSize * REGION_LABEL_LINE_HEIGHT) / k;
 			for (const rm of this.regionMeta) {
 				if (!rm.lines) continue;
+				ctx.globalAlpha = rm.dimmed ? regionAlpha * DIMMED_ALPHA : regionAlpha;
 				ctx.fillStyle = `hsla(${rm.hue}, 55%, ${data.colors.clusterLightness.label}%, 0.85)`;
 				const firstOffset = (-(rm.lines.length - 1) / 2) * lineH;
 				for (let i = 0; i < rm.lines.length; i++) {
