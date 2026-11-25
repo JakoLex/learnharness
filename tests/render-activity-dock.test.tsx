@@ -87,6 +87,21 @@ describe("activity dock pure layer", () => {
 		assert.ok(blobs.every((b) => b.chatId === "src_a"), "abort/link identity stays source-scoped");
 	});
 
+	it("progress bars (fork, owner 2026-11-25): an import's blob carries the loader's pages, then its sections", () => {
+		const rows = [
+			{ id: "src_b", chatId: "src_b", title: "TM-Arrigoni.pdf", phase: "reading", startedAt: NOW - 2000,
+				reading: { state: "running", phase: "docling", page: 30, pages: 291 } },
+			{ id: "src_a#12", chatId: "src_a", part: { i: 12, n: 40 }, title: "notes.md · 12/40", phase: "auditing", startedAt: NOW - 1000 },
+		] as FeedExtraction[];
+		const [reading, section] = toBlobs({ jobs: [], extractions: rows });
+		assert.deepEqual(reading!.progress, { fraction: 30 / 291, text: "Step 1/2 · Docling · page 30/291" });
+		assert.deepEqual(section!.progress, { fraction: 11.6 / 40, text: "Section 12/40" });
+		const html = renderToStaticMarkup(<ActivitySection feed={{ jobs: [], extractions: rows }} />);
+		assert.equal(html.split('data-testid="activity-blob-progress"').length - 1, 2);
+		assert.match(html, /Step 1\/2 · Docling · page 30\/291/);
+		assert.match(html, /aria-valuenow="29"/);
+	});
+
 	it("uses the server's Pi price projection; absent pricing is null, never zero", () => {
 		const priced = job({
 			usage: {

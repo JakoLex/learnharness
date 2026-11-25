@@ -5,6 +5,8 @@ import { apiFetch } from "@/components/api-fetch";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIcon, BotIcon, FileTextIcon, PenToolIcon, PlayIcon, SearchIcon, SquareIcon, TriangleAlertIcon, WaypointsIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { runProgress, type LoaderProgressView, type Progress } from "@/lib/run-progress";
+import { ProgressBar } from "./progress-bar";
 import type { CallUsage, JobKind, JobRecord, ModelOutage } from "@/src/core";
 import { isModelsRefusal, isProviderKeyRefusal, subscriptionLabel, subscriptionLabels } from "@/src/core";
 import { formatTokens, planCostLabel, prettyModel } from "@/components/usage-format";
@@ -67,6 +69,8 @@ export interface FeedExtraction {
 	title: string;
 	phase: string;
 	startedAt: number;
+	/** The doc loader's progress while an import reads (fork, 2026-11-25). */
+	reading?: LoaderProgressView;
 }
 
 export interface FeedPluginWorker {
@@ -211,6 +215,10 @@ export interface ActivityBlob {
 	model?: string;
 	/** Model calls made so far, when usage is reported. */
 	steps?: number;
+	/** Extraction blobs (fork, owner 2026-11-25): the progress bar — the doc
+	 *  loader's pages while reading, the import's sections after
+	 *  (lib/run-progress.ts, the same as the graph's import pill). */
+	progress?: Progress | null;
 }
 
 /** Merge the feed into one oldest-first blob list (the stable blob order). */
@@ -287,6 +295,7 @@ export function toBlobs(feed: ActivityFeed): ActivityBlob[] {
 			cost: null, // extraction runs don't ride the money channel (v1)
 			context: null,
 			activity: "",
+			progress: runProgress(run),
 		});
 	}
 	blobs.sort((a, b) => a.startedAt - b.startedAt);
@@ -513,6 +522,12 @@ function ActivityBlobRow({
 					<SquareIcon className="size-3" />
 				</button>
 			</div>
+			{blob.progress && (
+				<div className="mt-1 flex items-center gap-2 pl-[1.375rem] pr-7 text-muted-foreground" data-testid="activity-blob-progress">
+					<ProgressBar fraction={blob.progress.fraction} className="min-w-12 flex-1" />
+					{blob.progress.text && <span className="max-w-40 truncate tabular-nums">{blob.progress.text}</span>}
+				</div>
+			)}
 
 			{detailOpen && (
 				<div

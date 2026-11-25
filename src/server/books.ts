@@ -39,7 +39,11 @@ import {
 	type BookRecord,
 } from "../core/books.ts";
 import { bookLinkKey, sourceSwitches, switchedOffNote, withoutInclusionIds } from "../core/source-inclusion.ts";
-import { convertDocument, docLoaderConfigured, DocLoaderFailedError, DocLoaderUnavailableError, sha256 } from "../agent/doc-loader.ts";
+import { convertDocument, docLoaderConfigured, DocLoaderFailedError, DocLoaderUnavailableError, sha256, type LoaderProgress } from "../agent/doc-loader.ts";
+
+/** Fork (owner, 2026-11-25): the doc loader's progress per book while it
+ *  reads — memory only, merged into listBooks for the shelf's bar. */
+const readingProgress = new Map<string, LoaderProgress>();
 import { convertPdf, openPdfBytes } from "../agent/subagents/pdf-ops.ts";
 import { renderOpenPdfPage } from "../agent/subagents/headless.ts";
 import { llamaSwapUrl } from "../agent/local-providers.ts";
@@ -163,7 +167,10 @@ async function indexBook(id: string): Promise<void> {
 		if (docLoaderConfigured()) {
 			update(id, { activity: "reading the pages (doc loader on the PC)" });
 			try {
-				const result = await convertDocument({ bytes, fileName: book.fileName, contentType: "application/pdf" });
+				const result = await convertDocument({
+					bytes, fileName: book.fileName, contentType: "application/pdf",
+					onProgress: (progress) => readingProgress.set(id, progress),
+				}).finally(() => readingProgress.delete(id));
 				pages = result.pages
 					.filter((p): p is { page: number; text: string } => p.page !== null && p.text.trim().length > 0)
 					.map((p) => ({ page: p.page, text: p.text.trim() }));
@@ -266,7 +273,11 @@ function linkedBooks(): BookRecord[] {
 export function listBooks(): BookRecord[] {
 	const books = linkedBooks();
 	resumeWork(books);
-	return books;
+	// Copies, never the stored records: the progress must not reach disk.
+	return books.map((book) => {
+		const reading = readingProgress.get(book.id);
+		return reading && book.status === "indexing" ? { ...book, reading } : book;
+	});
 }
 
 /** Fork (owner, 2026-11-25): a PDF imported into the graph goes on the

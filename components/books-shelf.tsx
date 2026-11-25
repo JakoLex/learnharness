@@ -19,6 +19,8 @@ import { apiFetch, currentProjectId } from "./api-fetch";
 import { BookPageViewer } from "./book-page-viewer";
 import { useServerEvent } from "./server-events";
 import type { BookRecord } from "@/src/core";
+import { loaderProgress, type Progress } from "@/lib/run-progress";
+import { ProgressBar } from "./progress-bar";
 
 async function failureText(res: Response): Promise<string> {
 	const body = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -37,6 +39,18 @@ function statusLine(book: BookRecord): { text: string; tone: "busy" | "ok" | "wa
 	return { text: "Ready", tone: "ok" };
 }
 
+/** Fork (owner, 2026-11-25): the shelf's progress bar — the doc loader's
+ *  pages while it reads the book, then the meaning index's chunks. */
+export function bookProgress(book: BookRecord): Progress | null {
+	if (book.status === "indexing" && book.reading) return loaderProgress(book.reading);
+	if (book.status === "indexing") return { fraction: null, text: "" };
+	if (book.vectors === "running") {
+		const chunks = book.chunks ?? 0;
+		return { fraction: chunks > 0 ? Math.min(1, (book.embedded ?? 0) / chunks) : null, text: "" };
+	}
+	return null;
+}
+
 const TONE: Record<ReturnType<typeof statusLine>["tone"], string> = {
 	busy: "text-muted-foreground",
 	ok: "text-muted-foreground",
@@ -44,7 +58,7 @@ const TONE: Record<ReturnType<typeof statusLine>["tone"], string> = {
 	error: "text-error",
 };
 
-function BookRow({ book, on, onSwitch, onChanged, onOpen }: {
+export function BookRow({ book, on, onSwitch, onChanged, onOpen }: {
 	book: BookRecord; on: boolean; onSwitch: (on: boolean) => void; onChanged: () => void; onOpen: (page: number) => void;
 }) {
 	const [editing, setEditing] = useState(false);
@@ -76,6 +90,7 @@ function BookRow({ book, on, onSwitch, onChanged, onOpen }: {
 		await patch({ firstPage: next });
 	};
 	const status = statusLine(book);
+	const progress = bookProgress(book);
 
 	return (
 		<li data-testid="book-row" className={`rounded-xl border bg-card px-4 py-3${on ? "" : " opacity-60"}`}>
@@ -107,6 +122,12 @@ function BookRow({ book, on, onSwitch, onChanged, onOpen }: {
 						</p>
 					)}
 					<p className={`mt-1 text-xs ${TONE[status.tone]}`} data-testid="book-status">{status.text}</p>
+					{progress && (
+						<div className="mt-1.5 flex max-w-md items-center gap-2 text-xs text-muted-foreground" data-testid="book-progress">
+							<ProgressBar fraction={progress.fraction} className="flex-1" />
+							{progress.text && <span className="truncate tabular-nums">{progress.text}</span>}
+						</div>
+					)}
 					{book.notice && <p className="mt-1 text-xs text-muted-foreground">{book.notice}</p>}
 					{book.pageCount > 0 && (book.pageLabels ? (
 						<p className="mt-1 text-xs text-muted-foreground">Printed page numbers come from the PDF.</p>

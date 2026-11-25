@@ -53,6 +53,10 @@ export interface BookRecord {
 	sourceId?: string;
 	addedAt: string;
 	updatedAt: string;
+	/** Transient, never stored (fork, owner 2026-11-25): the doc loader's own
+	 *  progress while it reads this book — listBooks merges it in for the
+	 *  shelf's progress bar (src/agent/doc-loader.ts LoaderProgress). */
+	reading?: { state: "waiting" | "running"; phase?: string; page?: number; pages?: number; kind?: string; ahead?: number };
 }
 
 /** One page's text, as the reader produced it. */

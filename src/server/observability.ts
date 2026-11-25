@@ -19,7 +19,7 @@
  * from the pipeline's module for the abort route to call.
  */
 
-import { extractionStatuses, type ExtractionPhase } from "../agent/subagents/extraction.ts";
+import { extractionStatuses, type ExtractionPhase, type RunningExtraction } from "../agent/subagents/extraction.ts";
 import { chatStore } from "../store/chats.ts";
 import { graphRevision } from "./graph.ts";
 import { catalogContextLimits } from "./model-catalog.ts";
@@ -63,6 +63,9 @@ export interface ActivityExtraction {
 	title: string;
 	phase: ExtractionPhase;
 	startedAt: number;
+	/** The doc loader's own progress while an import reads (fork, owner
+	 *  2026-11-25: the dock's progress bar, as in the graph's import pill). */
+	reading?: RunningExtraction["reading"];
 }
 
 /** The dock's whole world in one payload: every running process, every view.
@@ -111,6 +114,7 @@ export function activityFeed(): {
 			(run.part ? ` · ${run.part.i}/${run.part.n}` : ""),
 		phase: run.phase,
 		startedAt: run.startedAt,
+		...(run.reading ? { reading: run.reading } : {}),
 	}));
 	// A native createBackgroundTool job already owns its worker row and durable END.
 	// Acceptance and job linkage are synchronous, so the queued→running bridge

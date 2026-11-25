@@ -82,6 +82,44 @@ test("PUT <base>/process with the file, its name and the bearer; pages come back
 	assert.ok(cachedDocument(pdfBytes()));
 });
 
+test("progress bars (fork, owner 2026-11-25): while the loader converts, onProgress hears its /status?sha= answer", async () => {
+	let release!: () => void;
+	const converted = new Promise<void>((r) => (release = r));
+	answer = async (call) => {
+		if (call.url.includes("/status?sha=")) {
+			return Response.json({ state: "running", phase: "seiten", kind: "formeln", page: 4, pages: 9, seit: 12, phase_seit: 3, davor: 0 });
+		}
+		await converted;
+		return Response.json(pages("Seite eins"));
+	};
+	const heard: unknown[] = [];
+	const done = convertDocument({ bytes: pdfBytes(), fileName: "skript.pdf", onProgress: (p) => { heard.push(p); release(); } });
+	await done;
+	const status = calls.find((c) => c.url.includes("/status?sha="));
+	assert.ok(status, "the loader was asked for its progress");
+	assert.match(status!.url, /^http:\/\/loader\.test\/upstream\/doc-loader\/status\?sha=[0-9a-f]{64}$/);
+	assert.deepEqual(heard[0], { state: "running", phase: "seiten", kind: "formeln", page: 4, pages: 9, ahead: 0 });
+	const polls = calls.filter((c) => c.url.includes("/status?sha=")).length;
+	await new Promise((r) => setTimeout(r, 3500));
+	assert.equal(calls.filter((c) => c.url.includes("/status?sha=")).length, polls, "no polling after the conversion");
+});
+
+test("progress bars: a loader without /status (404) just gives no progress", async () => {
+	let release!: () => void;
+	const converted = new Promise<void>((r) => (release = r));
+	answer = async (call) => {
+		if (call.url.includes("/status?sha=")) {
+			setTimeout(release, 10);
+			return new Response("not found", { status: 404 });
+		}
+		await converted;
+		return Response.json(pages("Seite eins"));
+	};
+	const heard: unknown[] = [];
+	await convertDocument({ bytes: pdfBytes(), fileName: "alt.pdf", onProgress: (p) => heard.push(p) });
+	assert.deepEqual(heard, []);
+});
+
 test("concurrent callers share one conversion", async () => {
 	let release!: () => void;
 	answer = () => new Promise((resolve) => { release = () => resolve(Response.json(pages("geteilt"))); });

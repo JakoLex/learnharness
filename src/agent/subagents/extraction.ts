@@ -53,6 +53,7 @@ import {
 	type ReviewRecord,
 } from "./review.ts";
 import { runSubmitAgent, healStringifiedArrays } from "./submit-agent.ts";
+import type { LoaderProgress } from "../doc-loader.ts";
 
 /**
  * The extraction pipeline (vision §1 construction, 2026-09-02 redesign;
@@ -843,6 +844,9 @@ export interface RunningExtraction {
 	/** True-cancellation handle (the dock's abort button): one controller per
 	 *  run, shared across phases; abort() cancels the in-flight model call. */
 	controller: AbortController;
+	/** The doc loader's own progress during "reading" (fork, owner
+	 *  2026-11-25: the import pill's progress bar). */
+	reading?: LoaderProgress;
 }
 
 interface LhExtractionGlobal {
@@ -965,7 +969,11 @@ export type NotesImportInput = {
 		 *  signal is the dock's abort. `text` feeds the extraction;
 		 *  `pagedText` (the same text with page markers) is what
 		 *  `read_source` keeps when the reader had pages (2026-10-30). */
-		read: (signal: AbortSignal) => Promise<{ text: string; pagedText?: string }>;
+		read: (
+			signal: AbortSignal,
+			/** The doc loader's progress while it reads (fork, owner 2026-11-25). */
+			onProgress?: (progress: LoaderProgress) => void,
+		) => Promise<{ text: string; pagedText?: string }>;
 	}
 );
 
@@ -1772,7 +1780,13 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 				refuseIfStagesUnready();
 				setPhase(id, "reading", "notes", input.filePath);
 				try {
-					const read = await input.read(runningExtractions.get(id)!.controller.signal);
+					const read = await input.read(runningExtractions.get(id)!.controller.signal, (progress) => {
+						const run = runningExtractions.get(id);
+						if (!run || run.phase !== "reading") return;
+						if (JSON.stringify(run.reading) === JSON.stringify(progress)) return;
+						run.reading = progress;
+						emit("activity-changed", {});
+					});
 					text = read.text;
 					kept = read.pagedText ?? read.text;
 				} catch (err) {

@@ -1192,6 +1192,27 @@ describe("message anchors (session propositions carry their passage's id)", () =
 		assert.ok(merged.provenance.some((pt) => pt.chatId === chatId && pt.messageId === "a2"));
 	});
 
+	it("progress bars (fork, owner 2026-11-25): the reading run carries the doc loader's progress while it reads", async () => {
+		const ledgers = memoryLedgers();
+		const pipeline = createExtractionPipeline({
+			chatStore,
+			graphStore: ledgers,
+			extractor: submitModel("submit_findings", NOTES_FINDINGS),
+			auditor: submitModel("submit_review", { links: [] }),
+		});
+		let seen: unknown;
+		await pipeline.importNotes({
+			filePath: "/vault/skript.pdf",
+			read: async (_signal, onProgress) => {
+				onProgress?.({ state: "running", phase: "docling", page: 3, pages: 10 });
+				seen = extractionStatuses().find((r) => r.phase === "reading")?.reading;
+				return { text: NOTES_TEXT };
+			},
+		});
+		assert.deepEqual(seen, { state: "running", phase: "docling", page: 3, pages: 10 });
+		assert.equal(extractionStatuses().length, 0, "the reading row leaves with its progress");
+	});
+
 	it("the notes door stays anchor-free: no messageId required — and a stray one never reaches provenance", async () => {
 		const ledgers = memoryLedgers();
 		const pipeline = createExtractionPipeline({

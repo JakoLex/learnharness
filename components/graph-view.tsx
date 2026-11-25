@@ -91,6 +91,8 @@ import { GraphReviewControl } from "@/components/graph-review.tsx";
 import { ToolContentResponse } from "@/components/ai-elements/message";
 import { Hint } from "@/components/ui/hint";
 import { cn } from "@/lib/utils";
+import { runProgress, type LoaderProgressView } from "@/lib/run-progress";
+import { ProgressBar } from "./progress-bar";
 import {
 	ARROW_LENGTH_LADDER,
 	CHARGE_RANGE,
@@ -845,6 +847,43 @@ function GraphSettingsControl({
  *  fade in on their mount (graph-chrome-fade-in, globals.css — the
  *  appear-once transition as the first nodes land). Exported pure for
  *  the empty/populated SSR pins (the DeleteNodeBody pattern). */
+/** One running pipeline job as /api/graph/status reports it. */
+export interface PipelineRunView {
+	id: string;
+	chatId: string;
+	title: string;
+	phase: string;
+	startedAt: number;
+	part?: { i: number; n: number };
+	reading?: LoaderProgressView;
+}
+
+/** A running job's pill (top right of the graph). Fork (owner, 2026-11-25):
+ *  a thin progress bar under the line — the doc loader's pages while
+ *  reading, the import's sections afterwards (lib/run-progress.ts). */
+export function PipelineRunPill({ run, now = Date.now() }: { run: PipelineRunView; now?: number }) {
+	const progress = runProgress(run);
+	return (
+		<div
+			data-testid="pipeline-run"
+			className="flex flex-col gap-1 rounded-2xl border bg-card/85 px-3 py-1.5 text-xs text-muted-foreground shadow-lg backdrop-blur"
+		>
+			<div className="flex items-center gap-2">
+				<Loader2Icon className="size-3.5 shrink-0 animate-spin" />
+				<span className="capitalize">{run.phase}</span>
+				<span className="max-w-48 truncate text-foreground">{run.title}</span>
+				<span className="tabular-nums">{Math.max(0, Math.round((now - run.startedAt) / 1000))}s</span>
+			</div>
+			{progress && (
+				<div className="flex items-center gap-2">
+					<ProgressBar fraction={progress.fraction} className="min-w-24 flex-1" />
+					{progress.text && <span className="max-w-64 truncate tabular-nums">{progress.text}</span>}
+				</div>
+			)}
+		</div>
+	);
+}
+
 export function GraphChromeRow({
 	isEmpty,
 	query,
@@ -1211,7 +1250,7 @@ export function GraphView({
 	// chunk jobs), NOT chatId: chatId-scoping re-batched per-chunk jobs
 	// into one end-of-import reveal (the exact bug this rule exists to
 	// prevent — a chunk's row leaving IS its merge landing).
-	const [pipelineRuns, setPipelineRuns] = useState<{ id: string; chatId: string; title: string; phase: string; startedAt: number }[]>([]);
+	const [pipelineRuns, setPipelineRuns] = useState<PipelineRunView[]>([]);
 	const rowIdsRef = useRef<Set<string>>(new Set());
 	const readPipelineStatus = useCallback(() => {
 		apiFetch("/api/graph/status")
@@ -1731,17 +1770,7 @@ export function GraphView({
 			    the way the old bottom-left stack did; the whole top-right
 			    cluster is one column, right-aligned. */}
 			{costs && costs.runs.length > 0 && <GraphCostControl costs={costs} />}
-			{pipelineRuns.map((run) => (
-				<div
-					key={run.id}
-					className="flex items-center gap-2 rounded-full border bg-card/85 px-3 py-1.5 text-xs text-muted-foreground shadow-lg backdrop-blur"
-				>
-					<Loader2Icon className="size-3.5 shrink-0 animate-spin" />
-					<span className="capitalize">{run.phase}</span>
-					<span className="max-w-48 truncate text-foreground">{run.title}</span>
-					<span className="tabular-nums">{Math.max(0, Math.round((Date.now() - run.startedAt) / 1000))}s</span>
-				</div>
-			))}
+			{pipelineRuns.map((run) => <PipelineRunPill key={run.id} run={run} />)}
 			</div>
 
 			{selected && !isEmpty && (

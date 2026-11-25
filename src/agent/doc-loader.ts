@@ -43,8 +43,11 @@ export class DocLoaderFailedError extends Error {
 	override name = "DocLoaderFailedError";
 }
 
-/** The longest a single conversion may run (a 100-page scan takes ~20 min). */
-const CONVERSION_TIMEOUT_MS = 60 * 60_000;
+/** The longest a single conversion may run (a 100-page scan takes ~20 min).
+ *  Fork (owner, 2026-11-25): 3 h, up from 60 min — a 291-page script with
+ *  formulas on nearly every page needs ~2 h on its first read; after that the
+ *  loader's own page cache makes a re-read take minutes. */
+const CONVERSION_TIMEOUT_MS = 3 * 60 * 60_000;
 
 /** fetch's default dispatcher drops a request after 300 s without response
  *  headers (UND_ERR_HEADERS_TIMEOUT, surfacing as "fetch failed") — the
@@ -139,14 +142,88 @@ async function requestConversion(bytes: Uint8Array, fileName: string, contentTyp
 	}));
 }
 
+/** The loader's own progress on one file (fork, owner 2026-11-25: progress
+ *  bars in the graph's import pill and on the shelf). The owner's loader
+ *  answers `GET <base>/status?sha=<sha256 of the file>` while it holds the
+ *  file; other loaders answer 404 and there is simply no progress. */
+export interface LoaderProgress {
+	state: "waiting" | "running";
+	/** The loader's step: "lesen", "docling", "docling2" (second Docling
+	 *  pass), "seiten" (formula and image pages), "libreoffice", "bild". */
+	phase?: string;
+	/** Pages done / to do in "docling", "docling2" and "seiten". */
+	page?: number;
+	pages?: number;
+	/** "seiten" only: the page now being read is "formeln" or "bild". */
+	kind?: string;
+	/** Files that reached the loader earlier and still run or wait. */
+	ahead?: number;
+}
+
+const PROGRESS_POLL_MS = 3000;
+const PROGRESS_FIRST_MS = 1500;
+
+const count = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
+
+async function readProgress(digest: string, fetchImpl: typeof fetch): Promise<LoaderProgress | null> {
+	const base = process.env.DOC_LOADER_URL!.trim().replace(/\/+$/, "");
+	try {
+		const res = await fetchImpl(`${base}/status?sha=${digest}`, { signal: AbortSignal.timeout(4000) });
+		if (!res.ok) return null;
+		const d = await res.json() as Record<string, unknown>;
+		if (d.state !== "waiting" && d.state !== "running") return null;
+		return {
+			state: d.state,
+			...(typeof d.phase === "string" ? { phase: d.phase } : {}),
+			...(count(d.page) !== undefined ? { page: count(d.page) } : {}),
+			...(count(d.pages) !== undefined ? { pages: count(d.pages) } : {}),
+			...(typeof d.kind === "string" && d.kind ? { kind: d.kind } : {}),
+			...(count(d.davor) !== undefined ? { ahead: count(d.davor) } : {}),
+		};
+	} catch {
+		return null; // progress is cosmetic: a failed poll is just no news
+	}
+}
+
+/** Poll the loader's progress for `digest` until the conversion settles or
+ *  this caller stops waiting. */
+function watchProgress(
+	digest: string,
+	conversion: Promise<unknown>,
+	onProgress: (progress: LoaderProgress) => void,
+	fetchImpl: typeof fetch,
+	signal: AbortSignal | undefined,
+): void {
+	let done = false;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const stop = () => {
+		done = true;
+		if (timer) clearTimeout(timer);
+	};
+	conversion.then(stop, stop);
+	signal?.addEventListener("abort", stop, { once: true });
+	const tick = async () => {
+		if (done) return;
+		const progress = await readProgress(digest, fetchImpl);
+		if (done) return;
+		if (progress) onProgress(progress);
+		timer = setTimeout(tick, PROGRESS_POLL_MS);
+		timer.unref?.();
+	};
+	timer = setTimeout(tick, PROGRESS_FIRST_MS);
+	timer.unref?.();
+}
+
 /** The pages of `bytes`, from the cache or the loader. `signal` only ends
- *  THIS caller's wait — the conversion itself runs on and fills the cache. */
+ *  THIS caller's wait — the conversion itself runs on and fills the cache.
+ *  `onProgress` hears the loader's own progress while this caller waits. */
 export async function convertDocument(input: {
 	bytes: Uint8Array;
 	fileName: string;
 	contentType?: string;
 	signal?: AbortSignal;
 	fetchImpl?: typeof fetch;
+	onProgress?: (progress: LoaderProgress) => void;
 }): Promise<DocResult> {
 	if (!docLoaderConfigured()) throw new DocLoaderUnavailableError("doc loader not configured (DOC_LOADER_URL / DOC_LOADER_KEY)");
 	const digest = sha256(input.bytes);
@@ -167,6 +244,7 @@ export async function convertDocument(input: {
 		// unhandled rejection; every waiting caller still sees it.
 		conversion.catch(() => {});
 	}
+	if (input.onProgress) watchProgress(digest, conversion, input.onProgress, input.fetchImpl ?? fetch, input.signal);
 	return waitFor(conversion, input.signal);
 }
 

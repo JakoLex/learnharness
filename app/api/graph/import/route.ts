@@ -108,8 +108,8 @@ async function POSTHandler(request: Request) {
 					const shelfCopy = kind === "pdf" ? bytes.slice() : undefined;
 					input = {
 						filePath,
-						read: async (signal) => {
-							const doc = await readDocument({ name: file.name, type: kind === "pdf" ? "application/pdf" : file.type, bytes }, signal);
+						read: async (signal, onProgress) => {
+							const doc = await readDocument({ name: file.name, type: kind === "pdf" ? "application/pdf" : file.type, bytes }, signal, onProgress);
 							notice = doc.notice;
 							sourceDirectory.registerImport(filePath);
 							// Fork (owner, 2026-11-25): an imported PDF goes on the

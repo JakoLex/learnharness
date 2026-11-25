@@ -27,6 +27,10 @@ async function GETHandler() {
 			(run.part ? ` · ${run.part.i}/${run.part.n}` : ""),
 		phase: run.phase,
 		startedAt: run.startedAt,
+		// Fork (owner, 2026-11-25): the progress bar's inputs — the chunk part
+		// and the doc loader's own progress while it reads.
+		...(run.part ? { part: run.part } : {}),
+		...(run.reading ? { reading: run.reading } : {}),
 		// Live per-stage usage (the money channel): model + per-step CallUsage,
 		// accumulated as steps bill. Cost and context-window folds are the
 		// consumer's (core/prices.ts helpers — nothing stores dollars).

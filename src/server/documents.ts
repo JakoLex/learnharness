@@ -7,7 +7,7 @@
  * clear message.
  */
 import * as path from "node:path";
-import { convertDocument, docLoaderConfigured, DocLoaderFailedError, DocLoaderUnavailableError, type DocPage } from "../agent/doc-loader.ts";
+import { convertDocument, docLoaderConfigured, DocLoaderFailedError, DocLoaderUnavailableError, type DocPage, type LoaderProgress } from "../agent/doc-loader.ts";
 import { convertPdf } from "../agent/subagents/pdf-ops.ts";
 import { joinPages } from "../agent/subagents/pdf-markdown.ts";
 
@@ -44,13 +44,15 @@ export interface ReadDocument {
 export async function readDocument(
 	file: { name: string; type?: string; bytes: Uint8Array },
 	signal?: AbortSignal,
+	/** The loader's own progress while it reads (fork, owner 2026-11-25). */
+	onProgress?: (progress: LoaderProgress) => void,
 ): Promise<ReadDocument> {
 	const ext = path.extname(file.name).toLowerCase();
 	const pdf = ext === ".pdf" || file.type === "application/pdf";
 	let reason = "not configured";
 	if (docLoaderConfigured()) {
 		try {
-			const result = await convertDocument({ bytes: file.bytes, fileName: file.name, contentType: file.type, signal });
+			const result = await convertDocument({ bytes: file.bytes, fileName: file.name, contentType: file.type, signal, onProgress });
 			if (!result.text) throw new DocLoaderFailedError("the doc loader found no text in this file");
 			return { text: result.text, ...withPages(result.pages) };
 		} catch (err) {
