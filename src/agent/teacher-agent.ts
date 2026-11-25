@@ -19,6 +19,7 @@ import { practiceTools, createPracticeGate, type PracticeGate, type PracticeTool
 import { pluginProblemTools, isPluginProblemPoseAcknowledgment, type NativePluginProblemContribution } from "./plugin-problem-tools.ts";
 import { healToolRecord, withArgumentHeal } from "./tools/heal.ts";
 import { sendToUserApplies, sendToUserTool } from "./tools/send-to-user.ts";
+import { BOOK_CITATION_RULE } from "./tools/books.ts";
 import { makeNarrationGuard, narrationGuardApplies, SEND_TO_USER_DELIVERY_RULE } from "./narration-guard.ts";
 import { createReadTool, readTool } from "./tools/read.ts";
 import { quizInputObject, quizInputProblems } from "../core/question-core.ts";
@@ -65,6 +66,8 @@ export const CONVERSATION_TOOL_NAMES = Object.freeze([
 	"plan_init", "list_sessions", "list_propositions", "problem", "conclude", sendToUserTool.name,
 	// Fork: the map and material readers (tools/graph.ts).
 	"search_graph", "read_source",
+	// Fork (owner, 2026-11-24): the bookshelf (tools/books.ts).
+	"search_books", "read_book_page",
 ] as const);
 
 // P2 (2026-09-19): segment discovery + override resolution live in ONE
@@ -224,7 +227,10 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 	const composedPrompt = opts.promptSwitches
 		? composeInstructions(kind, opts.promptSwitches)
 		: sourceInstructions(kind);
-	const builtinPrompt = narrationGuard ? `${composedPrompt}\n\n---\n\n${SEND_TO_USER_DELIVERY_RULE}` : composedPrompt;
+	// Fork (owner, 2026-11-24): the citation rule rides along exactly when
+	// the bookshelf tools are in the registry.
+	const shelfPrompt = tools.some((tool) => tool.name === "search_books") ? `${composedPrompt}\n\n---\n\n${BOOK_CITATION_RULE}` : composedPrompt;
+	const builtinPrompt = narrationGuard ? `${shelfPrompt}\n\n---\n\n${SEND_TO_USER_DELIVERY_RULE}` : shelfPrompt;
 	// Bind native read and preserve the kind/model-aware Claude output gate
 	// before resolving additive plugins. Explicit registries remain caller-owned.
 	const builtinTools = [

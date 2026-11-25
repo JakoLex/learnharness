@@ -108,7 +108,7 @@ it("Chains source deletion is a logically owned child and busy Escape never clos
 	let closes = 0, finishDelete: (() => void) | undefined;
 	await mount(<ChainTableOverlay open nodes={[]} chains={[]} sessions={{}} fileSources={{}} onClose={() => { closes++; }} />);
 	const viewId = controller.getTopLayer()!.id;
-	await click("cluster-checkbox-note"); await click("chain-delete");
+	await click("source-menu-note"); await click("source-delete-note");
 	assert.equal(controller.getTopLayer()!.kind, "modal");
 	assert.equal(controller.getTopLayer()!.ownerId, viewId, "body-portaled child retains view lifetime ownership");
 	globalThis.fetch = async (_url, init) => {
@@ -146,7 +146,7 @@ it("the full-window picker opts out of duplicate view ownership and inherits the
 	await act(async () => { search.dispatchEvent(down); });
 	assert.equal(down.defaultPrevented, true);
 	assert.ok(document.querySelector("[data-chain-nav-active]"), "picker-owned arrow navigation remains active");
-	await click("cluster-checkbox-note"); await click("chain-delete");
+	await click("source-menu-note"); await click("source-delete-note");
 	assert.equal(controller.getTopLayer()!.ownerId, modalId, "no phantom view owner between picker and confirmation");
 	await escape(); assert.equal(closes, 0);
 	await escape(); assert.equal(closes, 1); assert.equal(controller.getSnapshot().length, 0);

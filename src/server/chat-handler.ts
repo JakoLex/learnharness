@@ -34,6 +34,8 @@ import { fileAccessPolicy } from "./file-access.ts";
 import { collectToolCallIds } from "./pi/call-ids.ts";
 import { providerEventNote } from "../agent/provider-events.ts";
 import { effectiveSettings, stores } from "./stores.ts";
+import { bookFigurePdf, bookShelfContext } from "./books.ts";
+import { currentSourceSwitches } from "./source-selection.ts";
 import { getPluginAgentContributions, getPluginHost } from "./plugins.ts";
 import { preparePluginQuestionSubmission, reconcilePluginQuestionCompatibility, type QuestionTypeResolver } from "./plugin-questions.ts";
 import { searchAvailable, searchProvider } from "./search.ts";
@@ -114,6 +116,8 @@ const jobRunner = createJobRunner({
 	chatStore: stores.chatStore,
 	jobStore: stores.jobStore,
 	deliver: deliverJobResult,
+	// Fork (owner, 2026-11-24): visual's book pages, in the job's scope.
+	bookFigurePdf: bookFigurePdf,
 	// BYOK (owner, 2026-09-22): job engines resolve the chain — role
 	// override → slot → NOTHING — read FRESH per job (a settings PUT
 	// between dispatch and spawn lands); an empty chain flows through as
@@ -770,6 +774,12 @@ export async function handleChatInput(
 		// prompt fresh per turn, swapping in any enabled override segments.
 		promptSwitches: effective.agent.prompts,
 	};
+	// Fork (owner, 2026-11-24): the project's bookshelf. Practice always
+	// gets it (no toggles there); teacher and prober unless the books toggle
+	// is off. visual's book pages follow the same switch.
+	const shelf = bookShelfContext();
+	const shelfOn = effective.agent.tools.books !== false;
+	const teachShelf = shelf && shelfOn ? { books: shelf, bookFigure: bookFigurePdf } : {};
 	// PRACTICE BRANCH (owner design, 2026-10-04): a kind:"practice"
 	// session builds the practitioner from turn 1 — no prober→teacher
 	// split, no plan/question/job tools; the whole registry is
@@ -797,7 +807,8 @@ export async function handleChatInput(
 							spawn: (job, input) => void jobRunner.runJob(job.id, input),
 							searchAvailable,
 						},
-						...(graphToolsEnabled(effective) ? { graph: { chatStore: stores.chatStore, graphStore: stores.graphStore } } : {}),
+						...(graphToolsEnabled(effective) ? { graph: { chatStore: stores.chatStore, graphStore: stores.graphStore, switches: currentSourceSwitches } } : {}),
+						...(shelf ? { books: shelf } : {}),
 					},
 					agentOpts,
 				)
@@ -813,7 +824,8 @@ export async function handleChatInput(
 						searchAvailable,
 						// Fork (owner, 2026-10-30): the teacher reads the map and
 						// the imported sources too, behind the prober's gate.
-						...(graphToolsEnabled(effective) ? { graphStore: stores.graphStore } : {}),
+						...(graphToolsEnabled(effective) ? { graphStore: stores.graphStore, sourceSwitches: currentSourceSwitches } : {}),
+						...teachShelf,
 					},
 					agentOpts,
 				)
@@ -831,7 +843,8 @@ export async function handleChatInput(
 						// The map reader (wave 7): the prober reads the learner's
 						// knowledge graph through tools when the gate opens —
 						// graph master switch AND the agent.graphTools toggle.
-						...(graphToolsEnabled(effective) ? { graphStore: stores.graphStore } : {}),
+						...(graphToolsEnabled(effective) ? { graphStore: stores.graphStore, sourceSwitches: currentSourceSwitches } : {}),
+						...(shelf && shelfOn ? { books: shelf } : {}),
 					},
 					agentOpts,
 				);

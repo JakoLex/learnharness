@@ -40,7 +40,7 @@ async function click(id: string) {
 }
 it("a failed deletion keeps its original confirmation targets for retry even after refresh prunes removed sources", async () => {
 	let current = directory(), revisions = 0;
-	const requests: { sourceIds: string[]; folderIds: string[]; deleteSessions: boolean }[] = [];
+	const requests: { sourceIds: string[]; folderIds: string[]; deleteSessions: boolean; deleteBooks: boolean }[] = [];
 	globalThis.fetch = async (_url, init) => {
 		if (init?.method === "DELETE") {
 			requests.push(JSON.parse(init.body as string));
@@ -53,22 +53,41 @@ it("a failed deletion keeps its original confirmation targets for retry even aft
 	const onRevision = () => { revisions++; }; window.addEventListener("lh:graph-revision", onRevision);
 	try {
 		await mount(<ChainTableOverlay open nodes={[]} chains={[]} sessions={{}} fileSources={{}} onClose={() => {}} />);
-		await click("cluster-checkbox-a"); await click("chain-delete"); await click("source-delete-confirm");
+		await click("source-menu-a"); await click("source-delete-a"); await click("source-delete-confirm");
 		assert.match(document.querySelector('[data-testid="source-delete-failure"]')!.textContent!, /Some entries/);
 		assert.equal(document.querySelector('[data-testid="cluster-checkbox-a"]'), null);
 		assert.match(document.querySelector('[data-testid="source-deletion-names"]')!.textContent!, /a book/);
 		assert.equal(document.querySelector('[data-testid="chain-selection-bar"]'), null);
 		await click("source-delete-confirm");
 		assert.equal(document.querySelector('[data-testid="delete-source-dialog"]'), null);
-		assert.deepEqual(requests, [{ sourceIds: ["a"], folderIds: [], deleteSessions: false }, { sourceIds: ["a"], folderIds: [], deleteSessions: false }]);
+		const sent = { sourceIds: ["a"], folderIds: [], deleteSessions: false, deleteBooks: false };
+		assert.deepEqual(requests, [sent, sent]);
 		assert.equal(revisions, 2, "even a partial/ambiguous failure refreshes graph content");
 	} finally { window.removeEventListener("lh:graph-revision", onRevision); }
 });
-it("clearing ordinary source selection does not clear the caller's independent practice node picks", async () => {
-	let changes = 0; globalThis.fetch = async () => Response.json(directory());
+it("a source check is the tutor's switch: one change per click, never the caller's practice picks (fork, 2026-11-25)", async () => {
+	let changes = 0; const posts: unknown[] = [];
+	const switches = { off: { sources: [] as string[], books: [] as string[] }, links: { b: { book: "bk_b", title: "b book" } } };
+	globalThis.fetch = async (url, init) => {
+		if (url === "/api/graph/source-selection" && init?.method === "POST") {
+			const body = JSON.parse(init.body as string) as { changes: { id: string; on: boolean }[] };
+			posts.push(body);
+			for (const change of body.changes) switches.off.sources = change.on ? switches.off.sources.filter((id) => id !== change.id) : [...switches.off.sources, change.id];
+			return Response.json(switches);
+		}
+		if (url === "/api/graph/source-selection") return Response.json(switches);
+		return Response.json(directory());
+	};
 	await mount(<ChainTableOverlay open nodes={[]} chains={[]} sessions={{}} fileSources={{}} controlledSelection={new Set(["practice-node"])} onSelectionChange={() => { changes++; }} onClose={() => {}} />);
-	await click("cluster-checkbox-a"); assert.match(document.querySelector('[data-testid="chain-selected-summary"]')!.textContent!, /1 source/);
-	await click("chain-clear"); assert.equal(document.querySelector('[data-testid="chain-selection-bar"]'), null); assert.equal(changes, 0);
+	await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+	const box = () => document.querySelector<HTMLInputElement>('[data-testid="cluster-checkbox-a"]')!;
+	assert.equal(box().checked, true, "everything starts on");
+	assert.ok(document.querySelector('[data-testid="source-book-b"]'), "the linked book's icon");
+	await click("cluster-checkbox-a");
+	assert.deepEqual(posts, [{ changes: [{ kind: "source", id: "a", on: false }] }]);
+	assert.equal(box().checked, false);
+	assert.equal(document.querySelector('[data-testid="chain-selection-bar"]'), null, "no bar outside practice picking");
+	assert.equal(changes, 0);
 });
 const practiceDirectory = (): SourceDirectory => ({
 	organization: { version: 1, folders: [{ id: "f", name: "Mixed folder", parentId: null, createdAt: "now" }], placements: { a: { folderId: "f" }, b: { folderId: "f" }, practice: { folderId: "f" } } },
@@ -110,7 +129,7 @@ it("an older opening's late mutation reply cannot unlock a reopened tree with st
 	let finishDelete!: (response: Response) => void;
 	globalThis.fetch = (_url, init) => init?.method === "DELETE" ? new Promise((resolve) => { finishDelete = resolve; }) : Promise.resolve(Response.json(directory()));
 	const overlay = (open: boolean, nodes: GraphNode[] = []) => <ChainTableOverlay open={open} nodes={nodes} chains={[]} sessions={{ practice: "New practice" }} fileSources={{}} onClose={() => {}} />;
-	await mount(overlay(true)); await click("cluster-checkbox-a"); await click("chain-delete"); await click("source-delete-confirm");
+	await mount(overlay(true)); await click("source-menu-a"); await click("source-delete-a"); await click("source-delete-confirm");
 	await update(overlay(false));
 	const reads: ((response: Response) => void)[] = [];
 	globalThis.fetch = () => new Promise((resolve) => { reads.push(resolve); });
@@ -123,23 +142,29 @@ it("an older opening's late mutation reply cannot unlock a reopened tree with st
 	assert.ok(document.querySelector('[data-testid="cluster-group-a"]'));
 });
 
-it("folder selection, counts and confirmed source deletion exclude hidden practice sessions", async () => {
+it("folder switches, folder deletion and its confirmation exclude hidden practice sessions", async () => {
 	let current = practiceDirectory();
-	const requests: { sourceIds: string[]; folderIds: string[]; deleteSessions: boolean }[] = [];
-	globalThis.fetch = async (_url, init) => {
+	const requests: { sourceIds: string[]; folderIds: string[]; deleteSessions: boolean; deleteBooks: boolean }[] = [];
+	const posts: unknown[] = [];
+	globalThis.fetch = async (url, init) => {
+		if (url === "/api/graph/source-selection") {
+			if (init?.method === "POST") posts.push(JSON.parse(init.body as string));
+			return Response.json({ off: { sources: init?.method === "POST" ? ["a", "b"] : [], books: [] }, links: {} });
+		}
 		if (init?.method === "DELETE") { requests.push(JSON.parse(init.body as string)); current = { ...current, sources: current.sources.filter((s) => s.chatKind === "practice") }; }
 		return Response.json(current);
 	};
 	await mount(<ChainTableOverlay open nodes={[sourceNode("historical", "practice")]} chains={[]} sessions={{ practice: "Hidden practice" }} fileSources={{}} onClose={() => {}} />);
+	await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 	await click("folder-checkbox-f");
-	assert.equal(document.querySelector('[data-testid="chain-selected-summary"]')!.textContent, "2 sources · 1 folder");
+	assert.deepEqual(posts, [{ changes: [{ kind: "source", id: "a", on: false }, { kind: "source", id: "b", on: false }] }], "the hidden practice session is not switched");
 	await click("folder-icon-f");
 	assert.equal(document.querySelector('[data-testid="cluster-checkbox-practice"]'), null);
-	for (const id of ["a", "b"]) assert.equal(document.querySelector<HTMLInputElement>(`[data-testid="cluster-checkbox-${id}"]`)!.checked, true);
-	await click("chain-delete");
+	for (const id of ["a", "b"]) assert.equal(document.querySelector<HTMLInputElement>(`[data-testid="cluster-checkbox-${id}"]`)!.checked, false);
+	await click("folder-menu-f"); await click("folder-delete-f");
 	assert.doesNotMatch(document.querySelector('[data-testid="source-deletion-names"]')!.textContent!, /Hidden practice/);
 	await click("source-delete-confirm");
-	assert.deepEqual(requests, [{ sourceIds: ["a", "b"], folderIds: ["f"], deleteSessions: false }]);
+	assert.deepEqual(requests, [{ sourceIds: ["a", "b"], folderIds: ["f"], deleteSessions: false, deleteBooks: false }]);
 	assert.ok(document.querySelector('[data-testid="folder-checkbox-f"]'), "the container for a kept hidden session survives");
 });
 it("practice folder picking omits practice-born groups and retains caller-owned picks", async () => {
@@ -163,7 +188,7 @@ it("minimal home refreshes its snapshot and summary immediately after source del
 	};
 	await mount(<MinimalHome />);
 	assert.match(document.querySelector('[data-testid="knowledge-summary"]')!.textContent!, /1 imported note/);
-	await click("open-chain-table"); await click("cluster-checkbox-a"); await click("chain-delete"); await click("source-delete-confirm");
+	await click("open-chain-table"); await click("source-menu-a"); await click("source-delete-a"); await click("source-delete-confirm");
 	assert.match(document.querySelector('[data-testid="knowledge-summary"]')!.textContent!, /0 imported notes/);
 	assert.equal(document.querySelector('[data-testid="cluster-checkbox-a"]'), null);
 });

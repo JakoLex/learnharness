@@ -68,7 +68,7 @@ import { apiFetch } from "@/components/api-fetch";
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { GraphFolderFilterControl, useGraphFolderSelection } from "@/components/graph-folder-filter";
-import { useSourceDirectory } from "@/components/source-directory";
+import { useSourceDirectory, useSwitchedOffSources } from "@/components/source-directory";
 import { NotesImportControl, NotesImportErrors, NotesImportNotices, useNotesImport } from "@/components/notes-import.tsx";
 import { PluginGraphActions } from "@/components/plugin-chrome";
 import { SettingsSlider as SettingSlider } from "@/components/settings/controls";
@@ -1127,6 +1127,18 @@ export function GraphView({
 		nodeSources: snapshot.nodeSessions,
 		impLinks: snapshot.impLinks,
 	}), [organization, snapshot, folderSelection, listedFolders]);
+	// SOURCE SWITCHES (fork, owner 2026-11-25): a proposition whose sources
+	// are ALL switched off for the tutor is drawn dimmed (never hidden).
+	const switchedOff = useSwitchedOffSources(true);
+	const dimmedIds = useMemo(() => {
+		if (!snapshot || switchedOff.size === 0) return null;
+		const ids = new Set<string>();
+		for (const node of snapshot.propositions) {
+			const sources = snapshot.nodeSessions[node.id] ?? [];
+			if (sources.length > 0 && sources.every((id) => switchedOff.has(id))) ids.add(node.id);
+		}
+		return ids.size > 0 ? ids : null;
+	}, [snapshot, switchedOff]);
 	const filtering = query.trim() !== "" || folderVisibleIds !== null;
 	// The id set that survives the current search AND folder filter —
 	// consumed by the visibility feed and the "no matches" hint.
@@ -1534,6 +1546,11 @@ export function GraphView({
 
 	// Feed #3 — visibility: hidden nodes drop out of rendering, picking,
 	// hover, AND labels; edges drop when either endpoint is hidden.
+	// Feed #3b — the switched-off dimming (fork, owner 2026-11-25).
+	useEffect(() => {
+		rendererRef.current?.setDimmed(dimmedIds);
+	}, [dimmedIds, isEmpty]);
+
 	useEffect(() => {
 		rendererRef.current?.setVisible(filtering ? visibleIds : null);
 		// The open detail card cannot outlive its node's visibility.

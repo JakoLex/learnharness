@@ -17,6 +17,7 @@ const accounts = await import("../src/server/accounts.ts");
 const { readSettings, writeSettings } = await import("../src/store/settings.ts");
 const { listProjects } = await import("../src/store/projects.ts");
 const { createTeacherTools, createProberTools, hostFileAccess } = await import("../src/agent/tools.ts");
+const { practiceTools } = await import("../src/agent/tools/practice.ts");
 const { proxy } = await import("../proxy.ts");
 const { NextRequest } = await import("next/server");
 const { accountSectionIds } = await import("../components/settings/account-section.tsx");
@@ -135,6 +136,24 @@ describe("host file tools are the admin's", () => {
 		});
 		runInDataScope({ ...user, admin: true }, () => {
 			const tools = createTeacherTools(ctx);
+			for (const name of ["read", "ls", "find", "grep", "pdf"]) assert.ok(name in tools, name);
+		});
+	});
+	it("practice sessions follow the same gate", () => {
+		const practiceCtx = {
+			chatId: "c1",
+			chatStore: { getChat: () => ({ messages: [], kind: "practice" }) },
+			jobs: ctx,
+		} as never;
+		const user: DataScope = { userId: "usr_x", admin: false, userRoot: TMP_DATA };
+		runInDataScope(user, () => {
+			const tools = practiceTools(practiceCtx);
+			for (const name of ["read", "ls", "find", "grep", "pdf"]) assert.equal(name in tools, false, name);
+			assert.ok("research" in tools, "web research stays");
+			assert.ok("problem" in tools && "conclude" in tools, "the session tools stay");
+		});
+		runInDataScope({ ...user, admin: true }, () => {
+			const tools = practiceTools(practiceCtx);
 			for (const name of ["read", "ls", "find", "grep", "pdf"]) assert.ok(name in tools, name);
 		});
 	});

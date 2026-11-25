@@ -30,6 +30,10 @@ export interface JobToolContext {
 	 *  Research dispatch does not depend on it: web_fetch is keyless and
 	 *  web_search reports a missing provider as a recoverable tool result. */
 	searchAvailable?: () => boolean;
+	/** Fork (owner, 2026-11-24): the project's bookshelf for visual —
+	 *  present only when it has books. Validates a book page and returns the
+	 *  stored PDF's path (throws on an unknown book or page). */
+	bookFigure?: (bookId: string, page: number) => string;
 }
 
 export const researchInputSchema = Type.Object({
@@ -76,6 +80,24 @@ export const visualInputSchema = Type.Object({
 				description:
 					"A figure on one page of the learner's PDF (lecture slides, a textbook chapter) to annotate — the maker crops it from " +
 					"that page and draws on the crop. Never together with image.",
+			},
+		),
+	),
+});
+
+/** Fork (owner, 2026-11-24): visual with a book page — the schema the
+ *  teacher sees when the project has books. */
+export const visualBookInputSchema = Type.Object({
+	...visualInputSchema.properties,
+	book: Type.Optional(
+		Type.Object(
+			{
+				id: Type.String({ description: "The book's bk_… id (from search_books or read_book_page)." }),
+				page: Type.Integer({ minimum: 1, description: "The PDF page that holds the figure (the number after page= in a book link)." }),
+			},
+			{
+				description:
+					"A figure on one page of a book on this project's shelf to annotate — handled like pdf. Never together with image or pdf.",
 			},
 		),
 	),
@@ -145,6 +167,8 @@ const VISUAL_DESCRIPTION =
 	"Local image and PDF paths follow File access settings; use ls to discover allowed folders. " +
 	"The call is ASYNC and fire-and-forget — it resolves immediately and your turn continues; the verified figure arrives later " +
 	"as a new message.";
+const VISUAL_BOOK_NOTE =
+	" Pass `book` ({ id, page }) instead of `pdf` for a figure in a book on this project's shelf (the PDF page from a book link).";
 const PDF_DESCRIPTION =
 	"Dispatch a background sub-agent that READS a learner-provided PDF on your behalf (triage, targeted extraction, visual page " +
 	"reading for equations and diagrams) and returns a brief with page citations. Use it when the learner gives you a PDF path " +
@@ -181,15 +205,22 @@ export function jobTools(ctx: JobToolContext): Record<string, AgentTool<any>> {
 		visual: {
 			name: "visual",
 			label: "visual",
-			description: VISUAL_DESCRIPTION,
-			parameters: visualInputSchema,
+			description: ctx.bookFigure ? VISUAL_DESCRIPTION + VISUAL_BOOK_NOTE : VISUAL_DESCRIPTION,
+			parameters: ctx.bookFigure ? visualBookInputSchema : visualInputSchema,
 			// An unusable image path, PDF or page fails the CALL (no job is
 			// created), so the teacher corrects it in the same turn.
-			execute: serverExecute("visual", visualInputSchema, async (input, { toolCallId, signal }) => {
+			execute: serverExecute("visual", visualBookInputSchema, async (input, { toolCallId, signal }) => {
 				if (!ctx.jobStore.findJobByToolCallId(ctx.chatId, toolCallId)) {
 					if (input.image !== undefined && input.pdf !== undefined) throw new Error("Pass either image or pdf, not both.");
+					if (input.book !== undefined && (input.image !== undefined || input.pdf !== undefined)) {
+						throw new Error("Pass book alone, without image or pdf.");
+					}
 					if (input.image !== undefined) await checkLearnerImage(input.image);
 					if (input.pdf !== undefined) await checkPdfPage(input.pdf.path, input.pdf.page, signal);
+					if (input.book !== undefined) {
+						if (!ctx.bookFigure) throw new Error("This project has no books.");
+						ctx.bookFigure(input.book.id, input.book.page);
+					}
 				}
 				signal?.throwIfAborted();
 				return dispatch(ctx, "visual", toolCallId, VISUAL_ACK, input);
@@ -212,5 +243,5 @@ export function jobTools(ctx: JobToolContext): Record<string, AgentTool<any>> {
 
 export type ResearchInput = Static<typeof researchInputSchema>;
 export type DemoInput = Static<typeof demoInputSchema>;
-export type VisualInput = Static<typeof visualInputSchema>;
+export type VisualInput = Static<typeof visualBookInputSchema>;
 export type PdfInput = Static<typeof pdfInputSchema>;

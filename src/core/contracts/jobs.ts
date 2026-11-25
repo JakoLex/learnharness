@@ -249,6 +249,9 @@ export interface VisualToolInput {
 	/** A page of the learner's PDF: the maker crops the figure the brief
 	 *  names from it and annotates the crop. Never set with image. */
 	pdf?: { path: string; page: number };
+	/** Fork (owner, 2026-11-24): a page of a book on the project's shelf
+	 *  (PDF page), handled like pdf. Never set with image or pdf. */
+	book?: { id: string; page: number };
 }
 
 export interface VisualResult {

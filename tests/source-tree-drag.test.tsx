@@ -28,7 +28,7 @@ async function mount() {
 		nodes={[{ id: "n1", name: "Node", statement: "Statement", aliases: [], provenance: [{ chatId: "a", messageId: "m1" }], createdAt: "2026-10-30" }]}
 		chains={[]} sessions={{}} fileSources={{}} query="" onQuery={() => {}} sort={{ col: "name", dir: 1 }} onSort={() => {}} selection={new Set()}
 		expandedClusters={new Set(["f1", "f2", "a"])} expandedChains={new Set(["n1"])} onToggleCluster={() => {}} onToggleChain={() => {}}
-		onToggleNodes={() => {}} onClear={() => {}} onDelete={() => {}} onClose={() => {}} />); });
+		onToggleNodes={() => {}} onClear={() => {}} onClose={() => {}} />); });
 }
 afterEach(async () => { await act(async () => { root?.unmount(); }); root = undefined; host?.remove(); });
 function transfer() {

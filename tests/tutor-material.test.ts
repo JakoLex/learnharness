@@ -24,6 +24,7 @@ const { createProberTools, createTeacherTools } = await import("../src/agent/too
 const { practiceTools } = await import("../src/agent/tools/practice.ts");
 const { runSubmitAgent, submitRetry } = await import("../src/agent/subagents/submit-agent.ts");
 const { graphStore: realGraphStore } = await import("../src/store/graph.ts");
+const { sourceSwitches } = await import("../src/core/source-inclusion.ts");
 
 after(() => fs.rmSync(testData, { recursive: true, force: true }));
 
@@ -123,6 +124,50 @@ describe("search_graph", () => {
 		const chat = await text(tools.search_graph, { query: "Lissajous" });
 		assert.match(chat, /— from Lab prep:/);
 		assert.equal(await text(tools.search_graph, { query: "Quantenchromodynamik" }), 'No proposition matches "Quantenchromodynamik".');
+	});
+});
+
+// ─── the learner's source switches (fork, owner 2026-11-25) ─────────────────
+
+describe("source switches: switched-off sources drop out of the map tools", () => {
+	const off = (...sources: string[]) => () => sourceSwitches({ version: 1, off: { sources, books: [] } });
+	const texts = { src_osc: SCRIPT, src_piezo: "--- Page 1 ---\nPiezo" };
+
+	it("list_sessions leaves them out and counts them, never naming them", async () => {
+		const out = await text(proberGraphTools({ ...stores(), switches: off("src_piezo") }).list_sessions, {});
+		assert.doesNotMatch(out, /piezo-datasheet/);
+		assert.match(out, /oscilloscope-script\.pdf/);
+		assert.match(out, /\n\(1 source is switched off by the learner\.\)$/);
+		const none = await text(proberGraphTools({ ...stores(), switches: off("src_piezo", "src_osc", "chat_1") }).list_sessions, {});
+		assert.equal(none, "No session of the knowledge graph is switched on. (3 sources are switched off by the learner.)");
+		assert.doesNotMatch(await text(proberGraphTools(stores()).list_sessions, {}), /switched off/, "absent switches = all on");
+	});
+
+	it("list_propositions refuses a switched-off session, and its chains drop premises that are off", async () => {
+		const tools = proberGraphTools({ ...stores(), switches: off("src_osc") });
+		assert.match(await text(tools.list_propositions, { session: "src_osc" }), /switched off by the learner — its propositions are not available/);
+		const piezo = await text(tools.list_propositions, { session: "src_piezo" });
+		assert.match(piezo, /Piezoeffekt/);
+		assert.doesNotMatch(piezo, /⟹ Piezoeffekt/, "its premise lives only in the switched-off oscilloscope script");
+	});
+
+	it("search_graph keeps a proposition while any of its sources is on, and counts on an empty result", async () => {
+		const shared = stores();
+		const nodes = (shared.graphStore.readNodes() as ReturnType<typeof node>[]).map((n) =>
+			n.id === "n_saw" ? { ...n, provenance: [...n.provenance, { chatId: "chat_1", messageId: "" }] } : n);
+		const graphStore = { ...shared.graphStore, readNodes: () => nodes } as unknown as GraphStore;
+		const tools = proberGraphTools({ chatStore: shared.chatStore, graphStore, switches: off("src_osc") });
+		assert.match(await text(tools.search_graph, { query: "sägezahn" }), /Sägezahn als Zeitachse \[n_saw\]/, "also learned in the chat, which is on");
+		assert.equal(await text(tools.search_graph, { query: "Triggerung" }), 'No proposition matches "Triggerung". (1 source is switched off by the learner.)');
+	});
+
+	it("read_source lists only switched-on imports and refuses a switched-off one", async () => {
+		const tools = proberGraphTools({ ...stores(texts), switches: off("src_osc") });
+		const list = await text(tools.read_source, {});
+		assert.doesNotMatch(list, /oscilloscope-script/);
+		assert.match(list, /piezo-datasheet\.pdf/);
+		assert.match(list, /\(1 source is switched off by the learner\.\)$/);
+		assert.equal(await text(tools.read_source, { source: "src_osc", query: "Trigger" }), 'Source "src_osc" is switched off by the learner — its text is not available.');
 	});
 });
 

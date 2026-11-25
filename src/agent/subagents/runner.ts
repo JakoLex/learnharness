@@ -97,6 +97,10 @@ export interface JobRunnerDeps {
 	 *  Injected because the agent layer may not read the key store; absent
 	 *  in tests that inject engines directly (test engines never owe a key). */
 	providerKeyMissing?: (provider: string, tier: ModelSlotName) => ProviderKeyMissing | null;
+	/** Fork (owner, 2026-11-24): a visual's book page → the stored PDF's
+	 *  path, in the job's project scope (throws on an unknown book/page).
+	 *  Absent (tests) = book figures fail honestly. */
+	bookFigurePdf?: (bookId: string, page: number) => string;
 }
 
 export interface JobRunner {
@@ -465,6 +469,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 		const brief = typeof input?.brief === "string" ? input.brief : "";
 		const imagePath = typeof input?.image === "string" ? input.image : undefined;
 		const pdfInput = input?.pdf && typeof input.pdf.path === "string" && typeof input.pdf.page === "number" ? input.pdf : undefined;
+		const bookInput = input?.book && typeof input.book.id === "string" && typeof input.book.page === "number" ? input.book : undefined;
 
 		try {
 			// Annotation (issue #363): the learner image is read once, here,
@@ -483,6 +488,10 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 				if (pdfInput) {
 					jobStore.updateJob(jobId, { activity: `rendering page ${pdfInput.page}` });
 					pdf = await loadPdfFigureSource(pdfInput.path, pdfInput.page, loop.abortSignal);
+				} else if (bookInput) {
+					if (!deps.bookFigurePdf) throw new Error("book figures are not available here");
+					jobStore.updateJob(jobId, { activity: `rendering page ${bookInput.page}` });
+					pdf = await loadPdfFigureSource(deps.bookFigurePdf(bookInput.id, bookInput.page), bookInput.page, loop.abortSignal, "book");
 				}
 				jobStore.updateJob(jobId, { activity: pdf ? "finding figure" : image ? "annotating image" : "drawing figure" });
 				result = await runVisualMaker(

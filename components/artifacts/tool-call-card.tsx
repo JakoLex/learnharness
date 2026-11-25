@@ -45,6 +45,12 @@ function headlineArg(tool: string, input: unknown): string {
 	if (tool === "read_source" && typeof inp.source === "string" && inp.source.length > 0) {
 		return typeof inp.query === "string" && inp.query.length > 0 ? `${inp.source} "${inp.query}"` : inp.source;
 	}
+	// Fork (owner, 2026-11-24): the bookshelf pair.
+	if (tool === "search_books" && typeof inp.query === "string") return inp.query;
+	if (tool === "read_book_page" && typeof inp.book === "string") {
+		const at = typeof inp.page === "number" ? ` PDF p. ${inp.page}` : typeof inp.printed === "string" ? ` p. ${inp.printed}` : "";
+		return `${inp.book}${at}`;
+	}
 	return "";
 }
 

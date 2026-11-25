@@ -44,6 +44,7 @@ import { blurAfterPointerClick } from "@/components/focus-hygiene";
 import { chartSize, useSessionMermaid } from "@/components/session-overlay";
 import { Hint } from "@/components/ui/hint";
 import { BUILTIN_MERMAID_LANGUAGE, PluginCodeBlock } from "@/components/plugin-renderers";
+import { BOOK_CITATION_TAG, BookCitationLink } from "@/components/book-citations";
 
 /** Local rendering profile for host-mounted, display-only Markdown. Ordinary
  * transcript rendering (including SSR/static Streamdown) stays interactive. */
@@ -483,4 +484,7 @@ export const mdComponents = {
 	span: MathDisplay,
 	strong: MarkdownStrong,
 	blockquote: MarkdownBlockquote,
+	// Fork (owner, 2026-11-24): what rehypeBookCitations turns book page
+	// links into (message.tsx) — every other link stays Streamdown's.
+	[BOOK_CITATION_TAG]: BookCitationLink,
 };

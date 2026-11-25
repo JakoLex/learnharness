@@ -92,7 +92,7 @@ const BASE = {
 	onClose: () => {},
 };
 
-function render(props: Partial<typeof BASE> = {}) {
+function render(props: Partial<typeof BASE> & Record<string, unknown> = {}) {
 	return renderToStaticMarkup(React.createElement(ChainTableBody, { ...BASE, ...props }));
 }
 
@@ -413,39 +413,21 @@ describe("ChainTableBody — the floating selection bar (never shifts layout)", 
 		assert.ok(!html.includes('data-testid="chain-selection-bar"'));
 	});
 
-	it("counts selected sources with Clear and a fenced source-only Delete", () => {
-		const html = render({ selectedSources: new Set(["chat1", "notes1"]) });
-		assert.ok(html.includes('data-testid="chain-selection-bar"'));
-		assert.ok(html.includes('data-testid="chain-selected-summary"'));
-		assert.ok(html.includes("2 sources"));
-		assert.ok(html.includes('data-testid="chain-clear"'));
-		// The danger fence (owner, 2026-09-29 night): a divider quarantines
-		// the destructive action at the bar's right end, red + trash icon,
-		// opening a source-contribution confirmation, not global node deletion.
-		assert.ok(html.includes('data-testid="chain-danger-divider"'));
-		const del = html.match(/<button[^>]*data-testid="chain-delete"[^>]*>/)?.[0] ?? "";
-		assert.match(del, /border-destructive\/50/); // the destructive pair
-		assert.match(del, /aria-label="Delete selected sources and folders"/);
-		assert.ok(html.includes("lucide-trash-2"), "the trash icon");
-		// the fence is before Delete in the DOM (right end of the bar)
-		assert.ok(html.indexOf('chain-danger-divider"') < html.indexOf('chain-delete"'));
-	});
-
-	it("Delete and practice Done have matching top/bottom/right pill insets and fully rounded contours", () => {
-		for (const [selectMode, action] of [[false, "chain-delete"], [true, "chain-practice-done"]] as const) {
-			const html = render({ selectMode, selectedSources: new Set(["chat1"]), selection: new Set(["a"]) });
-			const bar = html.match(/<div[^>]*data-testid="chain-selection-bar"[^>]*>/)?.[0] ?? "";
-			const button = html.match(new RegExp(`<button[^>]*data-testid="${action}"[^>]*>`))?.[0] ?? "";
-			assert.match(bar, /rounded-full/); assert.match(button, /rounded-full/);
-			assert.match(bar, /py-2 pl-4 pr-2/, "keep text inset, match right inset to the vertical inset");
-			assert.equal(bar.includes(" px-4 "), false);
-		}
-	});
-
-	it("the Delete rides ONLY with a selection — no bar, no kill switch", () => {
-		const html = render({ expandedClusters: new Set(["chat1"]) });
+	it("outside practice picking there is no bar: the source checks are switches, Delete is in each row's menu (fork, 2026-11-25)", () => {
+		const directory = { organization: { version: 1, folders: [], placements: {} }, sources: [{ id: "chat1", kind: "chat", label: "Ethics lesson", createdAt: "2026-09-20" }] };
+		const html = render({ expandedClusters: new Set(["chat1"]), selection: new Set(["a"]), directory, onDeleteEntry: () => {} });
+		assert.ok(!html.includes('data-testid="chain-selection-bar"'));
 		assert.ok(!html.includes('data-testid="chain-delete"'));
-		assert.ok(!html.includes('data-testid="chain-danger-divider"'));
+		assert.ok(html.includes('data-testid="source-menu-chat1"'), "the row's ⋯ menu");
+	});
+
+	it("practice Done keeps its top/bottom/right pill insets and fully rounded contours", () => {
+		const html = render({ selectMode: true, selection: new Set(["a"]) });
+		const bar = html.match(/<div[^>]*data-testid="chain-selection-bar"[^>]*>/)?.[0] ?? "";
+		const button = html.match(/<button[^>]*data-testid="chain-practice-done"[^>]*>/)?.[0] ?? "";
+		assert.match(bar, /rounded-full/); assert.match(button, /rounded-full/);
+		assert.match(bar, /py-2 pl-4 pr-2/, "keep text inset, match right inset to the vertical inset");
+		assert.equal(bar.includes(" px-4 "), false);
 	});
 
 	it("a premise WITHOUT its conclusion derives as the singleton it becomes", () => {
@@ -500,7 +482,7 @@ describe("ChainTableOverlay — the lifted practice pick (owner vision, 2026-10-
 		assert.ok(html.includes("3 nodes → 1 chain"), "the bar reflects the lifted set, not internal state");
 	});
 
-	it("select mode: Done replaces the delete fence — no way to delete while picking", () => {
+	it("select mode: Done, and no way to delete while picking", () => {
 		const html = overlay({
 			selectMode: true,
 			controlledSelection: new Set(["a", "b"]),
@@ -508,7 +490,7 @@ describe("ChainTableOverlay — the lifted practice pick (owner vision, 2026-10-
 		assert.ok(html.includes('data-testid="chain-practice-done"'));
 		assert.ok(html.includes("Done"));
 		assert.ok(!html.includes('data-testid="chain-delete"'), "no delete while picking");
-		assert.ok(!html.includes('data-testid="chain-danger-divider"'));
+		assert.ok(!/data-testid="(?:source|folder)-menu-/.test(html), "no row menus while picking");
 	});
 
 	it("browse mode cannot accidentally delete a lifted graph-node selection", () => {

@@ -10,6 +10,11 @@ import {
 
 export class SourceOrganizationInputError extends Error {}
 
+/** A notes import's source id: the pipeline's path hash (extraction.ts). */
+export function notesSourceId(filePath: string): string {
+	return `src_${createHash("sha256").update(filePath).digest("hex").slice(0, 12)}`;
+}
+
 export function createSourceDirectory(deps: { chatStore: ChatStore; graphStore: GraphStore; sourceOrganizationStore: SourceOrganizationStore }) {
 	const freshFolder = () => ({ id: `folder_${randomUUID()}`, createdAt: new Date().toISOString() });
 	function read(): SourceDirectory {
@@ -54,7 +59,7 @@ export function createSourceDirectory(deps: { chatStore: ChatStore; graphStore: 
 	/** Before starting the file's existing extraction pipeline. The source key
 	 * is the pipeline's unchanged path hash; no source text is stored here. */
 	function registerImport(filePath: string): void {
-		const id = `src_${createHash("sha256").update(filePath).digest("hex").slice(0, 12)}`;
+		const id = notesSourceId(filePath);
 		const state = deps.sourceOrganizationStore.read();
 		// Legacy imports with no organization record already live at root.
 		// Explicitly preserve that placement on re-import too.

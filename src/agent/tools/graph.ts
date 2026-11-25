@@ -5,6 +5,7 @@ import { serverExecute } from "../tool-execute.ts";
 import { getGraph, graphSessionIndex, graphSessionPropositions } from "../../core/graph.ts";
 import { birthSessionOf } from "../../core/session-clusters.ts";
 import type { ChatStore, GraphStore } from "../../core/ports.ts";
+import { ALL_SOURCES_ON, switchedOffNote, type SourceSwitches } from "../../core/source-inclusion.ts";
 import { readTextSlice } from "./read.ts";
 import { createPropositionCandidateSearch, propositionCandidateBatch, type CandidateBatch, type CandidateProposition, type CandidateRequest } from "../../core/proposition-candidates.ts";
 
@@ -39,6 +40,11 @@ import { createPropositionCandidateSearch, propositionCandidateBatch, type Candi
 export interface GraphToolContext {
 	chatStore: ChatStore;
 	graphStore: GraphStore;
+	/** Fork (owner, 2026-11-25): the learner's source switches, read fresh
+	 *  on every call. Switched-off sessions and imports are left out, and a
+	 *  proposition shows while ANY of its sources is on; lists and empty
+	 *  results say how many are off (count only). Absent = all on. */
+	switches?: () => SourceSwitches;
 }
 
 const listSessionsInput = Type.Object({});
@@ -89,6 +95,10 @@ const readSourceInput = Type.Object({
 
 export function proberGraphTools(ctx: GraphToolContext): Record<string, AgentTool<any>> {
 	const deps = { chatStore: ctx.chatStore, graphStore: ctx.graphStore };
+	const switches = (): SourceSwitches => ctx.switches?.() ?? ALL_SOURCES_ON;
+	/** How many of the graph's sessions are switched off, as the note. */
+	const offSessionsNote = (sw: SourceSwitches) =>
+		switchedOffNote(graphSessionIndex(deps).filter((s) => !sw.sourceOn(s.id)).length, "source");
 	const readSourceText = ctx.graphStore.readSourceText?.bind(ctx.graphStore);
 	/** The imported sources whose text was kept AND that still have
 	 *  propositions — deleting a source's nodes takes it off the shelf. */
@@ -108,13 +118,17 @@ export function proberGraphTools(ctx: GraphToolContext): Record<string, AgentToo
 				"Reading this first shows what he has already covered and when, before you probe anything.",
 			parameters: listSessionsInput,
 			execute: serverExecute("list_sessions", listSessionsInput, async (): Promise<string> => {
-				const sessions = graphSessionIndex(deps);
-				if (sessions.length === 0) return "The knowledge graph is empty — no session has contributed propositions yet.";
+				const sw = switches();
+				const all = graphSessionIndex(deps);
+				if (all.length === 0) return "The knowledge graph is empty — no session has contributed propositions yet.";
+				const sessions = all.filter((s) => sw.sourceOn(s.id));
+				const note = switchedOffNote(all.length - sessions.length, "source");
+				if (sessions.length === 0) return `No session of the knowledge graph is switched on. ${note}`;
 				const lines = sessions.map((s, i) =>
 					`${i + 1}. ${s.name} (${s.kind}, ${s.propositions} proposition${s.propositions === 1 ? "" : "s"}, ` +
 					`born ${s.createdAt ?? "unknown date"}${s.updatedAt ? `, last active ${s.updatedAt}` : ""}) — id: ${s.id}`,
 				);
-				return `${sessions.length} session(s) in the knowledge graph, most recent first:\n${lines.join("\n")}`;
+				return `${sessions.length} session(s) in the knowledge graph, most recent first:\n${lines.join("\n")}${note ? `\n${note}` : ""}`;
 			}),
 		},
 		list_propositions: {
@@ -126,6 +140,8 @@ export function proberGraphTools(ctx: GraphToolContext): Record<string, AgentToo
 				"Covered is not understood: the map says what his material contained, your questions find out what he holds.",
 			parameters: listPropositionsInput,
 			execute: serverExecute("list_propositions", listPropositionsInput, async ({ session }): Promise<string> => {
+				const sw = switches();
+				if (!sw.sourceOn(session)) return `The session "${session}" is switched off by the learner — its propositions are not available.`;
 				const propositions = graphSessionPropositions(deps, session);
 				if (propositions.length === 0) {
 					return `No propositions born in session "${session}". Call list_sessions for the current ids.`;
@@ -138,7 +154,8 @@ export function proberGraphTools(ctx: GraphToolContext): Record<string, AgentToo
 				const chainLines = graph.chains
 					.filter((c) => {
 						const conclusion = nodes.get(c.conclusion);
-						return conclusion && birthSessionOf(conclusion) === session && c.premises.every((p) => nodes.has(p));
+						return conclusion && birthSessionOf(conclusion) === session
+							&& c.premises.every((p) => nodes.has(p) && sw.nodeOn(nodes.get(p)!));
 					})
 					.map((c) => `- ${c.premises.map((p) => nodes.get(p)!.name).join(" ∧ ")} ⟹ ${nodes.get(c.conclusion)!.name}`);
 				const lines = [
@@ -157,11 +174,15 @@ export function proberGraphTools(ctx: GraphToolContext): Record<string, AgentToo
 				`Returns up to ${MAX_HITS} matches, each with its name, id, the session it was born in, and its full statement.`,
 			parameters: searchGraphInput,
 			execute: serverExecute("search_graph", searchGraphInput, async ({ query }): Promise<string> => {
+				const sw = switches();
 				const names = new Map(graphSessionIndex(deps).map((s) => [s.id, s.name]));
 				const hits = getGraph(deps.graphStore).nodes.filter(
-					(n) => globMatch(query, n.name) || globMatch(query, n.statement) || n.aliases.some((a) => globMatch(query, a)),
+					(n) => sw.nodeOn(n) && (globMatch(query, n.name) || globMatch(query, n.statement) || n.aliases.some((a) => globMatch(query, a))),
 				);
-				if (hits.length === 0) return `No proposition matches "${query}".`;
+				if (hits.length === 0) {
+					const note = offSessionsNote(sw);
+					return `No proposition matches "${query}".${note ? ` ${note}` : ""}`;
+				}
 				const lines = hits.slice(0, MAX_HITS).map((n) => {
 					const born = birthSessionOf(n);
 					return `- ${n.name} [${n.id}]${born ? ` — from ${names.get(born) ?? born}` : ""}: ${n.statement}`;
@@ -182,12 +203,20 @@ export function proberGraphTools(ctx: GraphToolContext): Record<string, AgentToo
 						"continue with offset). With `source` + `query`: the matching lines with their line and page numbers.",
 					parameters: readSourceInput,
 					execute: serverExecute("read_source", readSourceInput, async ({ source, offset, limit, query }): Promise<string> => {
-						const sources = readableSources();
+						const sw = switches();
+						const all = readableSources();
+						const sources = all.filter((s) => sw.sourceOn(s.id));
+						const note = switchedOffNote(all.length - sources.length, "source");
 						if (!source) {
-							if (sources.length === 0) return "No imported source is readable — nothing imported since texts are kept, or its propositions were deleted.";
+							if (sources.length === 0) {
+								return all.length === 0
+									? "No imported source is readable — nothing imported since texts are kept, or its propositions were deleted."
+									: `No readable source is switched on. ${note}`;
+							}
 							const lines = sources.map((s) => `- ${s.name} — id: ${s.id}, ${s.text.split("\n").length} lines`);
-							return `${sources.length} readable source(s):\n${lines.join("\n")}`;
+							return `${sources.length} readable source(s):\n${lines.join("\n")}${note ? `\n${note}` : ""}`;
 						}
+						if (!sw.sourceOn(source)) return `Source "${source}" is switched off by the learner — its text is not available.`;
 						const hit = sources.find((s) => s.id === source);
 						if (!hit) {
 							return `Source "${source}" is not readable — it is not an imported source that still has propositions, or its text was not kept. Call read_source with no arguments for the readable ones.`;

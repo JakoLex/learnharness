@@ -84,7 +84,11 @@ export const JOB_TOOLS = ["research", "demo", "visual"] as const;
  *  lenient for forward-compat. The names are the MODEL-FACING tool names
  *  (research, not researcher; pdf is the PDF-reader dispatch, sources v0
  *  2026-09). */
-export const TOGGLEABLE_TOOLS = ["research", "demo", "visual", "pdf"] as const;
+// Fork (owner, 2026-11-24): "books" switches the bookshelf pair
+// (search_books + read_book_page) for the teacher and prober — one key
+// for two tools, applied at the composition root (chat-handler), not by
+// filterEnabledTools. Practice has no toggles.
+export const TOGGLEABLE_TOOLS = ["research", "demo", "visual", "pdf", "books"] as const;
 
 /** The keys the settings WRITE side accepts in agent.tools: the plain
  *  toggleables PLUS the quizzing-mechanics switch (`explain: true` arms

@@ -22,7 +22,7 @@
  * healthy. The dock's chips + graph refetch track progress live through
  * /api/graph/status, as with session runs.
  */
-import { documentKind, extraction, NotesImportError, readDocument, scoped, sourceDirectory } from "@/src/server";
+import { documentKind, extraction, notesSourceId, NotesImportError, readDocument, scoped, shelveImportedPdf, sourceDirectory } from "@/src/server";
 import { IMPORT_EXTENSIONS, MAX_IMPORT_BODY_BYTES, MAX_IMPORT_BYTES, TOO_BIG_MESSAGE, UNSUPPORTED_TYPE_MESSAGE, validNotesPath } from "@/lib/notes-import-limits.ts";
 import { FormBodyLimitError, readBoundedFormData } from "@/lib/bounded-form-data.ts";
 import {
@@ -104,12 +104,23 @@ async function POSTHandler(request: Request) {
 				const bytes = new Uint8Array(await file.arrayBuffer());
 				const kind = documentKind(file.name, bytes);
 				if (kind) {
+					// pdf.js detaches the buffer it reads: the bookshelf gets its own copy (fork).
+					const shelfCopy = kind === "pdf" ? bytes.slice() : undefined;
 					input = {
 						filePath,
 						read: async (signal) => {
 							const doc = await readDocument({ name: file.name, type: kind === "pdf" ? "application/pdf" : file.type, bytes }, signal);
 							notice = doc.notice;
 							sourceDirectory.registerImport(filePath);
+							// Fork (owner, 2026-11-25): an imported PDF goes on the
+							// bookshelf too, linked to this import. Never fails the import.
+							if (shelfCopy) {
+								try { shelveImportedPdf(notesSourceId(filePath), { name: file.name, bytes: shelfCopy }); }
+								catch (err) {
+									const why = `It could not go on the bookshelf: ${err instanceof Error ? err.message : String(err)}`;
+									notice = notice ? `${notice} ${why}` : why;
+								}
+							}
 							return doc;
 						},
 					};

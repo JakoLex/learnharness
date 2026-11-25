@@ -33,7 +33,7 @@ function Harness() {
 	return <ChainTableBody keyboardActive={enabled} directory={directory} nodes={nodes} chains={[{ id: "argument", premises: ["n1"], conclusion: "n2", provenance: [], createdAt: "2026-10-30" }]}
 		sessions={{}} fileSources={{}} query={query} onQuery={updateQuery} sort={{ col: "name", dir: 1 }} onSort={() => {}} selection={new Set()}
 		expandedClusters={clusters} expandedChains={chains} onToggleCluster={(id) => updateClusters((p) => toggle(p, id))} onToggleChain={(id) => updateChains((p) => toggle(p, id))}
-		onToggleNodes={() => { throw new Error("Navigation must not select nodes"); }} onClear={() => {}} onDelete={() => {}} onClose={() => {}}
+		onToggleNodes={() => { throw new Error("Navigation must not select nodes"); }} onClear={() => {}} onClose={() => {}}
 		onOrganizationChange={async () => { throw new Error("Navigation must not mutate organization"); }} />;
 }
 async function mount() {
@@ -134,7 +134,7 @@ it("rich statement actions keep native Space in both viewing and picking, while 
 			sort={{ col: "name", dir: 1 }} onSort={() => {}} selection={new Set()}
 			expandedClusters={new Set(["a"])} expandedChains={new Set(["argument"])}
 			onToggleCluster={() => {}} onToggleChain={() => {}} onToggleNodes={(ids, next) => toggles.push({ ids, next })}
-			onClear={() => {}} onDelete={() => {}} onClose={() => {}} />); });
+			onClear={() => {}} onClose={() => {}} />); });
 		const row = document.querySelector<HTMLElement>('[data-testid="prop-row-n1"]')!;
 		for (const selector of ['[aria-label="Copy code"]', '[aria-label="Copy equation source"]', '[data-streamdown="link"]']) {
 			const action = row.querySelector<HTMLElement>(selector)!; assert.ok(action, selector);

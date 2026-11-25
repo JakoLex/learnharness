@@ -9,6 +9,7 @@ export * from "./events-stream.ts";
 export * from "./chats.ts";
 export * from "./graph.ts";
 export * from "./source-organization.ts";
+export * from "./source-selection.ts";
 export * from "./source-deletion.ts";
 export { GraphReviewError, NotesImportError } from "../agent/subagents/extraction.ts";
 export { convertPdf } from "../agent/subagents/pdf-ops.ts";
@@ -72,3 +73,5 @@ export * from "./custom-provider.ts";
 export * from "./fork-features.ts";
 export * from "./documents.ts";
 export { customProviderGet, customProviderMutation } from "./custom-provider-http.ts";
+// Fork (owner, 2026-11-24): the bookshelf service (routes + the shelf page).
+export * from "./books.ts";

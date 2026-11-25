@@ -197,6 +197,9 @@ export interface RendererCallbacks {
 
 const LABEL_SIZE = 12; // the reference label size the wrap-width ratio is taken against
 const LABEL_WEIGHT = "500";
+/** Fork (owner, 2026-11-25): disc + label alpha of a proposition whose
+ *  sources are all switched off for the tutor. */
+const DIMMED_ALPHA = 0.3;
 
 /** Region (cluster) labels — wave 7's session names made the labels
  *  LONG: imported-file paths and renamed chat titles. They wrap at a
@@ -972,6 +975,9 @@ export class GraphCanvasRenderer {
 	private geoVersion = 0; // bump = geometry inputs changed
 	private builtVersion = -1; // version the cache was built at
 	private nodesPath: Path2D | null = null;
+	/** The dimmed discs (switched-off sources), filled at DIMMED_ALPHA. */
+	private dimmedNodesPath: Path2D | null = null;
+	private dimmed: ReadonlySet<string> | null = null;
 	private shaftsPath: Path2D = new Path2D();
 	private headsPath: Path2D = new Path2D();
 	// Fork (2026-10-27): bridge geometry — dashed curves, heads, hit-test
@@ -1247,6 +1253,15 @@ export class GraphCanvasRenderer {
 	setVisible(visible: ReadonlySet<string> | null): void {
 		this.visible = visible;
 		this.geoVersion++; // member visibility changes hulls + paths
+		this.markDirty();
+	}
+
+	/** Fork (owner, 2026-11-25): propositions whose sources are all
+	 *  switched off for the tutor draw dimmed — disc and label at
+	 *  DIMMED_ALPHA; still visible, pickable and hoverable. */
+	setDimmed(dimmed: ReadonlySet<string> | null): void {
+		this.dimmed = dimmed && dimmed.size > 0 ? dimmed : null;
+		this.geoVersion++;
 		this.markDirty();
 	}
 
@@ -1780,12 +1795,15 @@ export class GraphCanvasRenderer {
 		// Node discs: one Path2D, one fill() per frame. Implication nodes
 		// are pure geometry — never a disc, never a label, never picked.
 		const nodesPath = new Path2D();
+		const dimmedNodesPath = new Path2D();
 		for (const n of data.nodes) {
 			if (!isVisible(n.id) || isImpNodeId(n.id)) continue;
-			nodesPath.moveTo(n.x + nodeR, n.y);
-			nodesPath.arc(n.x, n.y, nodeR, 0, Math.PI * 2);
+			const path = this.dimmed?.has(n.id) ? dimmedNodesPath : nodesPath;
+			path.moveTo(n.x + nodeR, n.y);
+			path.arc(n.x, n.y, nodeR, 0, Math.PI * 2);
 		}
 		this.nodesPath = nodesPath;
+		this.dimmedNodesPath = this.dimmed ? dimmedNodesPath : null;
 
 		// Edge shafts + arrowheads (rendering arc, owner 2026-09-30): all
 		// arrows are PLAIN single shafts — the old double-shaft glyph is
@@ -2430,9 +2448,15 @@ export class GraphCanvasRenderer {
 			ctx.restore();
 		}
 
-		// 4. Nodes: one cached Path2D, one fill.
+		// 4. Nodes: one cached Path2D, one fill (+ the dimmed discs).
 		ctx.fillStyle = data.colors.node;
 		ctx.fill(this.nodesPath);
+		if (this.dimmedNodesPath) {
+			ctx.save();
+			ctx.globalAlpha = DIMMED_ALPHA;
+			ctx.fill(this.dimmedNodesPath);
+			ctx.restore();
+		}
 
 		// 6. Node labels — one global gate, faded together. World-scaled
 		// with the graph (they grow as you zoom in, Obsidian-style).
@@ -2444,7 +2468,10 @@ export class GraphCanvasRenderer {
 			for (const [id, lines] of this.labelLines) {
 				const n = this.nodeById.get(id);
 				if (!n || !labelInView(n.x, n.y, lines.length, view, this.world, this.labelWrapWidth)) continue;
+				const dim = this.dimmed?.has(id) ?? false;
+				if (dim) ctx.globalAlpha = nodeAlpha * DIMMED_ALPHA;
 				drawNameLines(ctx, n.x, n.y, lines, this.world, data.colors.label);
+				if (dim) ctx.globalAlpha = nodeAlpha;
 			}
 			ctx.restore();
 		}

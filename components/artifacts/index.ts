@@ -57,4 +57,8 @@ export const artifactRenderers: Record<string, ComponentType<ArtifactPartProps>>
 	// same card, headlined by their query / source id.
 	search_graph: ToolCallCard,
 	read_source: ToolCallCard,
+	// Fork (owner, 2026-11-24): the bookshelf pair, headlined by the query /
+	// the book and page.
+	search_books: ToolCallCard,
+	read_book_page: ToolCallCard,
 };

@@ -97,7 +97,8 @@ const SLOT_META: Record<ModelSlotName, { label: string; roster: string }> = {
 
 /** The owner's final toggleable-tool list (confirm with the user before
  *  changing — the Teacher stream settled this 2026-09-19). */
-export const TOGGLE_TOOLS = ["research", "demo", "visual", "pdf"] as const;
+// Fork (owner, 2026-11-24): + books (the bookshelf's search/read tools).
+export const TOGGLE_TOOLS = ["research", "demo", "visual", "pdf", "books"] as const;
 
 const CATALOG_REFRESH_MESSAGES: Record<ModelCatalogRefreshOutcome | "pending" | "failed", string> = {
 	pending: "Refreshing…",

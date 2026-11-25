@@ -73,3 +73,29 @@ export function useSourceDirectory(enabled: boolean) {
 
 	return { directory, failure, clearFailure: () => setFailure(""), reportFailure: setFailure, change };
 }
+
+/** Fork (owner, 2026-11-25): the ids of the sources switched off for the
+ *  chat agents (GET /api/graph/source-selection), refreshed on
+ *  sources-changed. Empty while unknown or on failure — nothing dims. */
+export function useSwitchedOffSources(enabled: boolean): ReadonlySet<string> {
+	const [off, setOff] = useState<ReadonlySet<string>>(() => new Set());
+	const version = useRef(0);
+	const read = useCallback(async () => {
+		const current = ++version.current;
+		try {
+			const response = await apiFetch("/api/graph/source-selection", { cache: "no-store" });
+			if (!response.ok) return;
+			const body = await response.json() as { off?: { sources?: unknown } };
+			const ids = Array.isArray(body.off?.sources) ? body.off.sources.filter((id): id is string => typeof id === "string") : [];
+			if (current === version.current) setOff((previous) => previous.size === ids.length && ids.every((id) => previous.has(id)) ? previous : new Set(ids));
+		} catch { /* keep the last good switches */ }
+	}, []);
+	useEffect(() => {
+		if (!enabled) return;
+		void read();
+		return () => { version.current++; };
+	}, [enabled, read]);
+	useServerEvent("sources-changed", () => { if (enabled) void read(); });
+	useServerResync(() => { if (enabled) void read(); });
+	return off;
+}

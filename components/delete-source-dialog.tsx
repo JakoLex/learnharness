@@ -4,8 +4,10 @@ import { useEffect, useState, type ReactElement, type ReactNode } from "react";
 import { HostDialog } from "./host-dialog";
 import type { SourceEntry, SourceFolder } from "@/src/core";
 
-export function DeleteSourceBody({ sources, folders, deleteSessions, onDeleteSessions, busy, failure, onClose, onRun, renderFrame }: {
+export function DeleteSourceBody({ sources, folders, deleteSessions, onDeleteSessions, linkedBooks = 0, deleteBooks = false, onDeleteBooks = () => {}, busy, failure, onClose, onRun, renderFrame }: {
 	sources: SourceEntry[]; folders: SourceFolder[]; deleteSessions: boolean; onDeleteSessions: (checked: boolean) => void;
+	/** Fork (owner, 2026-11-25): how many of the imports have a linked book. */
+	linkedBooks?: number; deleteBooks?: boolean; onDeleteBooks?: (checked: boolean) => void;
 	busy: boolean; failure: string; onClose: () => void; onRun: () => void;
 	renderFrame?: (frame: ReactElement<{ children: ReactNode }>) => ReactNode;
 }) {
@@ -26,6 +28,13 @@ export function DeleteSourceBody({ sources, folders, deleteSessions, onDeleteSes
 				<span className="mt-1 block text-xs text-muted-foreground">Unchecked, conversations stay in their current folders and can be extracted again. Either way, their graph contributions and extraction coverage are cleared. Checking this also permanently deletes their messages and background jobs.</span>
 			</span>
 		</label>}
+		{linkedBooks > 0 && <label className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-lg border border-border/60 px-4 py-3">
+			<input type="checkbox" data-testid="delete-source-books" checked={deleteBooks} disabled={busy}
+				onChange={(e) => onDeleteBooks(e.target.checked)} className="mt-0.5 size-4 shrink-0 accent-primary" />
+			<span className="min-w-0"><span className="block text-sm">Also delete the linked {linkedBooks === 1 ? "book" : `${linkedBooks} books`} on the bookshelf</span>
+				<span className="mt-1 block text-xs text-muted-foreground">Unchecked, {linkedBooks === 1 ? "it stays" : "they stay"} on the shelf, no longer linked, and keep{linkedBooks === 1 ? "s" : ""} {linkedBooks === 1 ? "its" : "their"} on/off switch.</span>
+			</span>
+		</label>}
 		{failure && <p role="alert" data-testid="source-delete-failure" className="mt-3 text-xs text-foreground">{failure}</p>}
 		<div className="mt-4 flex justify-end gap-2">
 			<button type="button" data-testid="source-delete-cancel" disabled={busy} onClick={onClose} className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40">Cancel</button>
@@ -35,21 +44,23 @@ export function DeleteSourceBody({ sources, folders, deleteSessions, onDeleteSes
 	return renderFrame ? renderFrame(frame) : frame;
 }
 
-export function DeleteSourceDialog({ open, sources, folders, onDelete, onClose }: {
-	open: boolean; sources: SourceEntry[]; folders: SourceFolder[]; onDelete: (deleteSessions: boolean) => Promise<void>; onClose: () => void;
+export function DeleteSourceDialog({ open, sources, folders, linkedBooks = 0, onDelete, onClose }: {
+	open: boolean; sources: SourceEntry[]; folders: SourceFolder[]; linkedBooks?: number;
+	onDelete: (deleteSessions: boolean, deleteBooks: boolean) => Promise<void>; onClose: () => void;
 }) {
-	const [deleteSessions, setDeleteSessions] = useState(false), [busy, setBusy] = useState(false), [failure, setFailure] = useState("");
-	useEffect(() => { if (!open) { setDeleteSessions(false); setBusy(false); setFailure(""); } }, [open]);
+	const [deleteSessions, setDeleteSessions] = useState(false), [deleteBooks, setDeleteBooks] = useState(false), [busy, setBusy] = useState(false), [failure, setFailure] = useState("");
+	useEffect(() => { if (!open) { setDeleteSessions(false); setDeleteBooks(false); setBusy(false); setFailure(""); } }, [open]);
 
 	if (!open) return null;
 	const run = async () => {
 		if (busy) return;
 		setBusy(true); setFailure("");
-		try { await onDelete(deleteSessions); onClose(); }
+		try { await onDelete(deleteSessions, deleteBooks); onClose(); }
 		catch (error) { setFailure(error instanceof Error ? error.message : String(error)); }
 		finally { setBusy(false); }
 	};
 	return <DeleteSourceBody sources={sources} folders={folders} deleteSessions={deleteSessions} onDeleteSessions={setDeleteSessions}
+		linkedBooks={linkedBooks} deleteBooks={deleteBooks} onDeleteBooks={setDeleteBooks}
 		busy={busy} failure={failure} onClose={onClose} onRun={() => { void run(); }}
 		renderFrame={(frame) => <HostDialog open frame={frame} onClose={() => {
 			if (busy) return "blocked";

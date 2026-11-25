@@ -20,6 +20,8 @@ import { jobTools, type DemoInput, type PdfInput, type ResearchInput, type Visua
 import { planTools, type PlanToolContext } from "./tools/plan.ts";
 import { probeDoneTool, type ProbeDoneContext } from "./tools/probe.ts";
 import { proberGraphTools } from "./tools/graph.ts";
+import type { SourceSwitches } from "../core/source-inclusion.ts";
+import { bookTools, type BookShelfContext } from "./tools/books.ts";
 import { readTool } from "./tools/read.ts";
 import { lsTool } from "./tools/ls.ts";
 import { findTool } from "./tools/find.ts";
@@ -300,6 +302,12 @@ export interface ProberToolContext extends ProbeDoneContext {
 	 *  master switch AND the agent.graphTools toggle (settings-resolution).
 	 *  Absent = the gate is closed, no map tools (tests drive this seam). */
 	graphStore?: GraphStore;
+	/** Fork (owner, 2026-11-25): the learner's source switches for the map
+	 *  tools (GraphToolContext.switches). Absent = all on. */
+	sourceSwitches?: () => SourceSwitches;
+	/** Fork (owner, 2026-11-24): the project's bookshelf — present when it
+	 *  has a ready book and the books toggle is on. */
+	books?: BookShelfContext;
 }
 
 /** The prober's tool set: probe quiz (no nodeId) + ask + the learner-fs
@@ -359,8 +367,10 @@ export function createProberTools(
 				// The map reader (wave 7): present only when the settings gate
 				// opened.
 				...(ctx.graphStore
-					? proberGraphTools({ chatStore: ctx.chatStore, graphStore: ctx.graphStore })
+					? proberGraphTools({ chatStore: ctx.chatStore, graphStore: ctx.graphStore, switches: ctx.sourceSwitches })
 					: {}),
+				// Fork (owner, 2026-11-24): the project's bookshelf.
+				...(ctx.books ? bookTools(ctx.books) : {}),
 				...done,
 			},
 				withoutMechanics(enabled),
@@ -425,6 +435,13 @@ export interface TeacherToolContext extends PlanToolContext {
 	/** Fork (owner, 2026-10-30): the map + source readers, present when the
 	 *  graph-tools gate opened — the prober's set (proberGraphTools). */
 	graphStore?: GraphStore;
+	/** Fork (owner, 2026-11-25): the learner's source switches. Absent = all on. */
+	sourceSwitches?: () => SourceSwitches;
+	/** Fork (owner, 2026-11-24): the project's bookshelf (search + read
+	 *  tools) — present when it has a ready book and the toggle is on. */
+	books?: BookShelfContext;
+	/** visual's book pages — present when the project has books. */
+	bookFigure?: (bookId: string, page: number) => string;
 }
 
 /**
@@ -484,8 +501,9 @@ export function createTeacherTools(
 			// (owner, 2026-11-04): every account, not only the admin.
 			show_image: createShowImageTool(ctx),
 			...planTools(ctx),
-			...withoutHostPdf(jobTools({ chatId: ctx.chatId, jobStore: ctx.jobStore, spawn: ctx.spawn, searchAvailable: ctx.searchAvailable })),
-			...(ctx.graphStore ? proberGraphTools({ chatStore: ctx.chatStore, graphStore: ctx.graphStore }) : {}),
+			...withoutHostPdf(jobTools({ chatId: ctx.chatId, jobStore: ctx.jobStore, spawn: ctx.spawn, searchAvailable: ctx.searchAvailable, bookFigure: ctx.bookFigure })),
+			...(ctx.graphStore ? proberGraphTools({ chatStore: ctx.chatStore, graphStore: ctx.graphStore, switches: ctx.sourceSwitches }) : {}),
+			...(ctx.books ? bookTools(ctx.books) : {}),
 		},
 		withoutMechanics(enabled),
 		),

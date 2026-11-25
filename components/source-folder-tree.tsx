@@ -3,10 +3,11 @@
 import { createContext, useContext, useLayoutEffect, useRef, useState, type DragEvent, type HTMLAttributes, type ReactNode } from "react";
 import { FolderIcon, FolderOpenIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { canMoveFolder, folderIsEmpty, fuzzyScore, placementOf, folderEntryCheck, type SourceEntrySelection, type OrganizationAction, type SourceDirectory } from "@/src/core";
+import { canMoveFolder, folderIsEmpty, fuzzyScore, placementOf, folderEntries, type OrganizationAction, type SourceDirectory } from "@/src/core";
 import type { ChainSort } from "./chain-table";
 import { chainRow } from "./chain-navigation";
 import { TreeCell, TreeCheckbox, TreeDisclosure, TreeGuide, TreeSeparator, treeBranchLayout, treeRowLayout } from "./tree-presentation";
+import { RowMenu } from "./row-menu";
 
 export type OrganizationChange = (action: OrganizationAction) => Promise<string | void>;
 export const SOURCE_DRAG_TYPE = "application/x-learnharness-source";
@@ -101,13 +102,17 @@ interface TreeSource {
 	key: string; birth: string | null; label: string | null; nodeIds: string[]; newestCreatedAt: string;
 }
 export function SourceFolderTree<T extends TreeSource>({ groups, directory, query, sort, renderSource, onAction, expanded,
-	onToggleExpanded, selection, selectedFolders, onToggleNodes, onToggleFolder, allSourceNodes, allowEmptySelection = true, collapsedForSearch, sourceSelection }: {
+	onToggleExpanded, selection, selectedFolders, onToggleNodes, onToggleFolder, allSourceNodes, allowEmptySelection = true, collapsedForSearch, inclusion, onDeleteFolder }: {
 	groups: T[]; directory?: SourceDirectory; query: string; sort: ChainSort;
 	renderSource: (source: T, depth: number) => ReactNode;
 	allSourceNodes?: ReadonlyMap<string, ReadonlySet<string>>;
 	allowEmptySelection?: boolean;
 	collapsedForSearch?: ReadonlySet<string>;
-	sourceSelection?: SourceEntrySelection;
+	/** Fork (owner, 2026-11-25): outside practice picking, a folder's check
+	 *  is the chat agents' switch for every source inside it. */
+	inclusion?: { sourceOn: (id: string) => boolean };
+	/** The folder row's "⋯" menu → Delete (fork, owner 2026-11-25). */
+	onDeleteFolder?: (id: string) => void;
 	onAction?: OrganizationChange; expanded: ReadonlySet<string>; onToggleExpanded: (id: string) => void;
 	selection: ReadonlySet<string>; selectedFolders: ReadonlySet<string>;
 	onToggleNodes: (ids: string[], next: boolean) => void; onToggleFolder: (id: string, next: boolean) => void;
@@ -176,7 +181,11 @@ export function SourceFolderTree<T extends TreeSource>({ groups, directory, quer
 			const members = nodeIds(folder.id);
 			const empty = folderIsEmpty(state, folder.id, ids);
 			const selectedCount = members.filter((id) => selection.has(id)).length;
-			const entryCheck = sourceSelection ? folderEntryCheck(directory, folder.id, sourceSelection) : undefined;
+			const inclusionCheck = inclusion ? (() => {
+				const ids = folderEntries(directory, folder.id).sources;
+				const on = ids.filter((id) => inclusion.sourceOn(id)).length;
+				return { checked: ids.length > 0 && on === ids.length, indeterminate: on > 0 && on < ids.length, none: ids.length === 0 };
+			})() : undefined;
 			const hasChildren = state.folders.some((f) => f.parentId === folder.id && visibleFolder(f.id)) || groups.some((g) => parentOf(g) === folder.id);
 			return <div key={folder.id} data-testid={`source-folder-${folder.id}`} {...treeBranchLayout()} {...dropProps(folder.id)}>
 				<SourceDragRow {...chainRow(["folder", folder.id], depth, open)} kind="folder" id={folder.id} name={folder.name} enabled={Boolean(onAction)} data-testid={`folder-row-${folder.id}`}
@@ -189,11 +198,12 @@ export function SourceFolderTree<T extends TreeSource>({ groups, directory, quer
 					    polish round): a rule under the folder row starting at the
 					    rail, like every rule between its items. */}
 					{open && hasChildren && <TreeSeparator data-testid={`folder-head-separator-${folder.id}`} outside inset={(depth + 1) * 36 + 1} />}
-					<TreeCheckbox aria-label={`Select ${sourceSelection ? "folder" : "contents of"} ${folder.name}`} data-testid={`folder-checkbox-${folder.id}`}
-						disabled={entryCheck ? false : empty ? !allowEmptySelection : members.length === 0}
-						checked={entryCheck?.checked ?? (empty ? selectedFolders.has(folder.id) : members.length > 0 && selectedCount === members.length)}
-						indeterminate={entryCheck?.indeterminate ?? (!empty && selectedCount > 0 && selectedCount < members.length)}
-						onChange={(e) => { if (entryCheck || empty) onToggleFolder(folder.id, e.target.checked); else onToggleNodes(members, e.target.checked); }} />
+					<TreeCheckbox aria-label={inclusion ? `Include everything in ${folder.name} for the tutor` : `Select contents of ${folder.name}`} data-testid={`folder-checkbox-${folder.id}`}
+						title={inclusion ? "Checked: the tutor takes these sources into account" : undefined}
+						disabled={inclusionCheck ? inclusionCheck.none : empty ? !allowEmptySelection : members.length === 0}
+						checked={inclusionCheck ? inclusionCheck.checked : (empty ? selectedFolders.has(folder.id) : members.length > 0 && selectedCount === members.length)}
+						indeterminate={inclusionCheck ? inclusionCheck.indeterminate : (!empty && selectedCount > 0 && selectedCount < members.length)}
+						onChange={(e) => { if (inclusionCheck || empty) onToggleFolder(folder.id, e.target.checked); else onToggleNodes(members, e.target.checked); }} />
 					<TreeDisclosure plain open={open} aria-label={`Expand folder ${folder.name}`} data-testid={`folder-toggle-${folder.id}`}
 						onClick={() => onToggleExpanded(folder.id)} />
 					<button type="button" data-source-icon data-testid={`folder-icon-${folder.id}`} aria-expanded={open} aria-label={`Expand folder ${folder.name}`}
@@ -202,6 +212,8 @@ export function SourceFolderTree<T extends TreeSource>({ groups, directory, quer
 					</button>
 					{onAction ? <EditableSourceName name={folder.name} onSave={(name) => onAction({ action: "rename-folder", id: folder.id, name })} />
 						: <span className="min-w-0 flex-1 truncate text-sm font-medium">{folder.name}</span>}
+					{onDeleteFolder && <RowMenu label={`More for folder ${folder.name}`} testid={`folder-menu-${folder.id}`}
+						items={[{ label: "Delete…", testid: `folder-delete-${folder.id}`, destructive: true, onSelect: () => onDeleteFolder(folder.id) }]} />}
 					<TreeCell widthClassName="w-14" align="right" className="text-xs tabular-nums text-muted-foreground">{members.length}</TreeCell>
 					<TreeCell widthClassName="w-20" align="right" className="text-xs tabular-nums text-muted-foreground">{folder.createdAt.slice(0, 10)}</TreeCell>
 				</SourceDragRow>

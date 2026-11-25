@@ -151,6 +151,11 @@ export function sourcesFile(): string {
 export function sourceTextFile(id: string): string {
 	return path.join(/* turbopackIgnore: true */ PATHS.graph, "source-text", `${id}.md`);
 }
+/** Fork (owner, 2026-11-24): the project's bookshelf — books.json, the
+ *  PDFs, their page text, keyword index, embeddings and rendered pages. */
+export function libraryDir(): string {
+	return path.join(/* turbopackIgnore: true */ projectRoot(), "library");
+}
 /** Fork (owner, 2026-11-10): the last graph review's protocol, and the
  *  ledgers as they stood before it (undo). */
 export function reviewFile(): string {
@@ -162,6 +167,11 @@ export function reviewBackupFile(): string {
 /** Presentation-only source names/folder placement; never extraction identity. */
 export function sourceOrganizationFile(): string {
 	return path.join(/* turbopackIgnore: true */ PATHS.graph, "source-organization.json");
+}
+/** Fork (owner, 2026-11-25): which sources and books are switched off for
+ *  the chat agents (core/source-inclusion.ts). */
+export function sourceSelectionFile(): string {
+	return path.join(/* turbopackIgnore: true */ PATHS.graph, "source-selection.json");
 }
 /** The layout ledger (read-modify-write like sources.json): nodeId →
  *  {x,y} resting positions from the incremental settle (core/layout.ts).

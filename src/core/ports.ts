@@ -10,6 +10,7 @@
  */
 
 import type { LhMessage } from "./native-messages.ts";
+import type { BookChunk, BookIndex, BookPageText, BookRecord } from "./books.ts";
 import type { PluginAgentRecord } from "./plugin-agents.ts";
 import type { PluginTaskRecord } from "./plugin-workers.ts";
 import type {
@@ -180,7 +181,38 @@ export interface SourceOrganizationStore {
 	write(state: import("./source-organization.ts").SourceOrganization): void;
 }
 
+/** Fork (owner, 2026-11-25): the project's source on/off switches. */
+export interface SourceSelectionStore {
+	read(): import("./source-inclusion.ts").SourceInclusion;
+	write(state: import("./source-inclusion.ts").SourceInclusion): void;
+}
+
 // ─── JobStore — background sub-agent jobs (data/jobs) ─────────────────────────
+
+/** Fork (owner, 2026-11-24): the scoped project's bookshelf. One record
+ *  per book in a small JSON map (read-modify-write); the bulky parts —
+ *  PDF, page text, keyword index, vectors, rendered pages — live in files
+ *  of their own, keyed by the book id. */
+export interface LibraryStore {
+	listBooks(): BookRecord[];
+	getBook(id: string): BookRecord | null;
+	/** Store the PDF and its record (id minted here). */
+	createBook(init: Omit<BookRecord, "id" | "addedAt" | "updatedAt">, pdf: Uint8Array): BookRecord;
+	updateBook(id: string, patch: Partial<Omit<BookRecord, "id" | "addedAt">>): BookRecord | null;
+	/** The record and every file of the book. */
+	deleteBook(id: string): boolean;
+	/** The stored PDF's absolute path (it exists while the record does). */
+	pdfPath(id: string): string;
+	writePages(id: string, pages: BookPageText[]): void;
+	readPages(id: string): BookPageText[] | null;
+	writeIndex(id: string, index: BookIndex): void;
+	readIndex(id: string): BookIndex | null;
+	/** Unit vectors, row-major: chunk i at [i*dims, (i+1)*dims). */
+	writeVectors(id: string, chunks: BookChunk[], vectors: Float32Array, dims: number): void;
+	readVectors(id: string): { chunks: BookChunk[]; vectors: Float32Array; dims: number } | null;
+	/** Where a rendered page PNG is cached. */
+	renderedPagePath(id: string, page: number): string;
+}
 
 export interface CreateJobInit {
 	kind: JobKind;

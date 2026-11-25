@@ -11,7 +11,13 @@ const FIGURE_LONG_SIDE = 1600;
 const MAX_FIGURE_DPI = 300;
 export const MIN_CROP_SIDE = 16;
 const MAX_PDF_FIGURE_BYTES = 64 * 1024 * 1024;
-const PDF_FIGURE_SIZE_ERROR = "PDF exceeds 64 MiB; provide a smaller PDF";
+/** Fork (owner, 2026-11-24): a book on the shelf may be as large as its
+ *  upload cap (src/server/books.ts MAX_BOOK_BYTES). */
+const MAX_BOOK_FIGURE_BYTES = 100 * 1024 * 1024;
+
+function sizeError(limit: number): string {
+	return `PDF exceeds ${limit / (1024 * 1024)} MiB; provide a smaller PDF`;
+}
 
 /** A page or crop of the learner's PDF, stored like any learner image. */
 export interface PdfFigureImage extends LearnerImage {
@@ -40,21 +46,21 @@ export interface PdfFigureSource {
 	close(): Promise<void>;
 }
 
-function checkPdfFile(stat: Stats): void {
+function checkPdfFile(stat: Stats, limit: number): void {
 	if (!stat.isFile()) throw new Error("it is not a regular file");
 	if (stat.size === 0) throw new Error("the file is empty");
-	if (stat.size > MAX_PDF_FIGURE_BYTES) throw new Error(PDF_FIGURE_SIZE_ERROR);
+	if (stat.size > limit) throw new Error(sizeError(limit));
 }
 
 /** Read at most the checked size plus one byte, including if the file grows
  * during the read. Owned storage can be handed directly to pdfjs. */
-async function readPdfFigureFile(absolute: string, signal?: AbortSignal): Promise<Uint8Array> {
-	checkPdfFile(await fs.stat(absolute));
+async function readPdfFigureFile(absolute: string, signal: AbortSignal | undefined, limit: number): Promise<Uint8Array> {
+	checkPdfFile(await fs.stat(absolute), limit);
 	signal?.throwIfAborted();
 	const handle = await fs.open(absolute, "r");
 	try {
 		const before = await handle.stat();
-		checkPdfFile(before);
+		checkPdfFile(before, limit);
 		signal?.throwIfAborted();
 		const bytes = new Uint8Array(before.size);
 		for (let offset = 0; offset < bytes.length;) {
@@ -67,8 +73,8 @@ async function readPdfFigureFile(absolute: string, signal?: AbortSignal): Promis
 		signal?.throwIfAborted();
 		const after = await handle.stat();
 		signal?.throwIfAborted();
-		if (after.size > MAX_PDF_FIGURE_BYTES || (extra && bytes.length === MAX_PDF_FIGURE_BYTES)) {
-			throw new Error(PDF_FIGURE_SIZE_ERROR);
+		if (after.size > limit || (extra && bytes.length === limit)) {
+			throw new Error(sizeError(limit));
 		}
 		if (extra || after.size !== before.size || after.mtimeMs !== before.mtimeMs) {
 			throw new Error("the file changed while being read; try again");
@@ -79,13 +85,17 @@ async function readPdfFigureFile(absolute: string, signal?: AbortSignal): Promis
 	}
 }
 
-async function openFigurePdf(rawPath: string, page: number, signal?: AbortSignal) {
+/** Where a figure's PDF comes from: a learner path (File access applies)
+ *  or a book on the project's shelf (an app-owned file, already validated). */
+export type FigurePdfOrigin = "path" | "book";
+
+async function openFigurePdf(rawPath: string, page: number, signal?: AbortSignal, origin: FigurePdfOrigin = "path") {
 	signal?.throwIfAborted();
 	// Reuse the shared file-access policy, including canonical/symlink checks.
-	const path = resolveSourcePath(rawPath);
+	const path = origin === "book" ? rawPath : resolveSourcePath(rawPath);
 	let opened: Awaited<ReturnType<typeof openPdfBytes>>;
 	try {
-		opened = await openPdfBytes(await readPdfFigureFile(path, signal), signal);
+		opened = await openPdfBytes(await readPdfFigureFile(path, signal, origin === "book" ? MAX_BOOK_FIGURE_BYTES : MAX_PDF_FIGURE_BYTES), signal);
 	} catch (error) {
 		signal?.throwIfAborted();
 		const reason = (error as NodeJS.ErrnoException).code === "ENOENT" ? "no such file" : error instanceof Error ? error.message : String(error);
@@ -111,8 +121,8 @@ export async function checkPdfPage(rawPath: string, page: number, signal?: Abort
 
 /** Job-time recheck: open one authorized byte snapshot. The preview and
  * every crop use that same page, never re-open the path. */
-export async function loadPdfFigureSource(rawPath: string, page: number, signal?: AbortSignal): Promise<PdfFigureSource> {
-	const { path, doc, close } = await openFigurePdf(rawPath, page, signal);
+export async function loadPdfFigureSource(rawPath: string, page: number, signal?: AbortSignal, origin: FigurePdfOrigin = "path"): Promise<PdfFigureSource> {
+	const { path, doc, close } = await openFigurePdf(rawPath, page, signal, origin);
 	try {
 		signal?.throwIfAborted();
 		const sourcePage = await doc.getPage(page);

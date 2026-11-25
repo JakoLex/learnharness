@@ -22,8 +22,10 @@ import { readTool } from "./read.ts";
 import { lsTool } from "./ls.ts";
 import { findTool } from "./find.ts";
 import { grepTool } from "./grep.ts";
+import { hostFileAccess } from "../tools.ts";
 import { jobTools, type JobToolContext } from "./jobs.ts";
 import { proberGraphTools, type GraphToolContext } from "./graph.ts";
+import { bookTools, type BookShelfContext } from "./books.ts";
 import { activeProblemOf } from "../../core/native-messages.ts";
 import type { LhMessage } from "../../core/native-messages.ts";
 import { concludeResult, invalidInputResult, problemResult } from "../tool-execute.ts";
@@ -45,6 +47,9 @@ export interface PracticeToolContext {
 	 *  Each absent context (tests) = absent from the registry. */
 	graph?: GraphToolContext;
 	jobs?: JobToolContext;
+	/** Fork (owner, 2026-11-24): the project's bookshelf — present when it
+	 *  has a ready book (practice has no tool toggles). */
+	books?: BookShelfContext;
 }
 
 /** TURN-SCOPED GATE STATE (the BKT incident, 2026-10-05): the gates used
@@ -194,9 +199,9 @@ export function concludeTool(gate: PracticeGate): AgentTool<typeof concludeInput
 export function practiceTools(ctx: PracticeToolContext, gate: PracticeGate = createPracticeGate(ctx)): Record<string, AgentTool<any>> {
 	// ONE gate per turn, shared by native/plugin poses and conclude.
 	// THE RARELY-NEEDED SET (owner round 10): read/ls/find/grep over the
-	// learner's files (always — the same read-only set the teacher and
-	// prober carry), the research + pdf jobs (available without search
-	// keys; demo/visual stay teach-only), and
+	// learner's files (admin only — the same read-only set and gate the
+	// teacher and prober carry), the research job (available without search
+	// keys) + the pdf job (admin only; demo/visual stay teach-only), and
 	// the prober's map readers when the settings gate opened. None are
 	// toggle-filtered: problem/conclude are the session; these are
 	// exceptions the doctrine says to reach for rarely.
@@ -205,15 +210,17 @@ export function practiceTools(ctx: PracticeToolContext, gate: PracticeGate = cre
 	// the standard argument heal over the WHOLE registry. problem/conclude
 	// keep their own (target-normalizing) prepareArguments as the composed
 	// inner pass; the double heal is idempotent by construction.
+	// Fork (2026-11-24): host files are the admin's here too, the same
+	// hostFileAccess() gate as the teacher's and prober's registries — a
+	// non-admin practice agent could otherwise read other accounts' data.
+	const hostFiles = hostFileAccess();
 	return healToolRecord({
 		problem: problemTool(gate, ctx.graphNodes),
 		conclude: concludeTool(gate),
-		read: readTool,
-		ls: lsTool,
-		find: findTool,
-		grep: grepTool,
+		...(hostFiles ? { read: readTool, ls: lsTool, find: findTool, grep: grepTool } : {}),
 		...(jobs?.research ? { research: jobs.research } : {}),
-		...(jobs ? { pdf: jobs.pdf! } : {}),
+		...(jobs && hostFiles ? { pdf: jobs.pdf! } : {}),
 		...(ctx.graph ? proberGraphTools(ctx.graph) : {}),
+		...(ctx.books ? bookTools(ctx.books) : {}),
 	});
 }

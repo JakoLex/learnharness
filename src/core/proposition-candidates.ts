@@ -1,4 +1,5 @@
 import type { GraphNode } from "./contracts/graph.ts";
+import { bm25TermScore, bm25Words } from "./bm25.ts";
 
 /** Retrieval only: scores rank lexical candidates, never decide identity. */
 export interface CandidateProposition {
@@ -45,8 +46,7 @@ const STOP_WORDS = new Set((
 ).split(" "));
 
 function words(text: string): string[] {
-	return (text.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])
-		.filter((word) => !STOP_WORDS.has(word));
+	return bm25Words(text, STOP_WORDS);
 }
 
 interface TextIndex {
@@ -106,9 +106,7 @@ export function createPropositionCandidateSearch(nodes: readonly GraphNode[]) {
 				for (const term of query) {
 					const tf = text.terms.get(term) ?? 0;
 					if (tf === 0) continue;
-					const df = frequency.get(term)!;
-					const idf = Math.log(1 + (indexed.length - df + 0.5) / (df + 0.5));
-					score += idf * (tf * 2.2) / (tf + 1.2 * (0.25 + 0.75 * text.length / averageLength));
+					score += bm25TermScore(tf, frequency.get(term)!, indexed.length, text.length, averageLength);
 				}
 				if (score > bestScore) {
 					bestScore = score;

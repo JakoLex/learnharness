@@ -6,11 +6,18 @@ import { stores } from "./stores.ts";
 import { sourceDirectory } from "./source-organization.ts";
 import { deleteIdleChatRecord, runningWorkBlocker, settleChatsForDeletion } from "./chats.ts";
 import { graphRevision } from "./graph.ts";
+import { bookLinks, removeBook, unlinkBook } from "./books.ts";
+import { withoutInclusionIds } from "../core/source-inclusion.ts";
 
 export class SourceDeletionError extends Error {
 	constructor(message: string, public status = 400, public code = "invalid_source_deletion") { super(message); }
 }
-export interface SourceDeletionRequest { sourceIds: string[]; folderIds: string[]; deleteSessions: boolean }
+export interface SourceDeletionRequest {
+	sourceIds: string[]; folderIds: string[]; deleteSessions: boolean;
+	/** Fork (owner, 2026-11-25): also delete the books linked to deleted
+	 *  imports. Unchecked, they stay on the shelf, unlinked. */
+	deleteBooks: boolean;
+}
 export function parseSourceDeletion(raw: unknown): SourceDeletionRequest {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new SourceDeletionError("Invalid source deletion request.");
 	const r = raw as Record<string, unknown>;
@@ -19,7 +26,8 @@ export function parseSourceDeletion(raw: unknown): SourceDeletionRequest {
 		return [...new Set(value)] as string[];
 	};
 	if (typeof r.deleteSessions !== "boolean") throw new SourceDeletionError("Session deletion must be explicitly selected or declined.");
-	const result = { sourceIds: ids(r.sourceIds), folderIds: ids(r.folderIds), deleteSessions: r.deleteSessions };
+	if (r.deleteBooks !== undefined && typeof r.deleteBooks !== "boolean") throw new SourceDeletionError("Book deletion must be true or false.");
+	const result = { sourceIds: ids(r.sourceIds), folderIds: ids(r.folderIds), deleteSessions: r.deleteSessions, deleteBooks: r.deleteBooks === true };
 	if (!result.sourceIds.length && !result.folderIds.length) throw new SourceDeletionError("Select at least one source or folder.");
 	return result;
 }
@@ -36,6 +44,9 @@ export function deleteSources(raw: unknown): SourceDirectory & { graphRevision: 
 		const blocker = runningWorkBlocker(entry.id);
 		if (blocker) throw new SourceDeletionError(blocker.error, blocker.status, blocker.code);
 	}
+	// Read the import ↔ book links while the imports still exist (fork).
+	const links = bookLinks();
+	const selection = stores.sourceSelectionStore.read();
 	// Clear the whole selected batch in one graph rewrite. Kept chats lose
 	// coverage/checkpoints too, so their unchanged messages can be re-extracted.
 	deleteSourcesTraces(stores.graphStore, new Set(targets.map((s) => s.id)), "delete-nodes");
@@ -48,6 +59,17 @@ export function deleteSources(raw: unknown): SourceDirectory & { graphRevision: 
 			removed.add(entry.id);
 		} else if (entry.kind !== "chat") removed.add(entry.id);
 	}
+	// Fork (owner, 2026-11-25): a deleted import's linked book goes too, or
+	// stays unlinked with the import's switch; deleted ids lose their switch
+	// (a re-import of the same path mints the same id and arrives on).
+	for (const entry of targets) {
+		const link = entry.kind === "notes" ? links[entry.id] : undefined;
+		if (!link) continue;
+		if (request.deleteBooks) removeBook(link.book);
+		else unlinkBook(link.book, selection.off.sources.includes(entry.id));
+	}
+	const afterBooks = stores.sourceSelectionStore.read();
+	if (afterBooks.off.sources.some((id) => removed.has(id))) stores.sourceSelectionStore.write(withoutInclusionIds(afterBooks, { sources: removed }));
 	const state = structuredClone(directory.organization);
 	state.placements = Object.fromEntries(Object.entries(state.placements).filter(([id]) => !removed.has(id)));
 	const remainingSources = new Set(sourceDirectory.read().sources.map((s) => s.id));

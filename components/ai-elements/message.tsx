@@ -36,6 +36,7 @@ import {
   type StreamdownProps,
 } from "streamdown";
 import { mdComponents } from "@/components/md-blocks";
+import { rehypeBookCitations } from "@/components/book-citations";
 import { frameDisplayMath, repairMathForDisplay, transformMathDelimiters } from "@/src/core";
 import { rehypeGluePunctuation } from "@/components/md-nobreak";
 
@@ -381,6 +382,8 @@ export const streamdownRehypePlugins = [
     ...defaultRehypePlugins,
     harden: [hardenPlugin, { ...hardenOptions, allowedImagePrefixes: [] }],
   }),
+  // Fork (owner, 2026-11-24): book page citations → <book-citation>.
+  rehypeBookCitations,
   rehypeGluePunctuation,
 ] as NonNullable<StreamdownProps["rehypePlugins"]>;
 

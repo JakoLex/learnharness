@@ -9,9 +9,11 @@
 import { chatStore } from "../store/chats.ts";
 import { graphStore } from "../store/graph.ts";
 import { sourceOrganizationStore } from "../store/source-organization.ts";
+import { sourceSelectionStore } from "../store/source-selection.ts";
 import { jobStore } from "../store/jobs.ts";
 import { settingsStore } from "../store/settings.ts";
 import { themeStore } from "../store/themes.ts";
+import { libraryStore } from "../store/library.ts";
 import { resolveSettings, type EffectiveSettings } from "../core/settings-resolution.ts";
 import { syncCustomProvider } from "./custom-provider.ts";
 import { configureWorkerRequestAdmission } from "../agent/worker-request-admission.ts";
@@ -20,9 +22,13 @@ export const stores = {
 	chatStore,
 	graphStore,
 	sourceOrganizationStore,
+	// Fork (owner, 2026-11-25): the source on/off switches.
+	sourceSelectionStore,
 	jobStore,
 	settingsStore,
 	themeStore,
+	// Fork (owner, 2026-11-24): the project's bookshelf.
+	libraryStore,
 };
 
 export type Stores = typeof stores;
